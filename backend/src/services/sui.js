@@ -1,19 +1,13 @@
-import { SuiClient, getFullnodeUrl } from '@mysten/sui/client';
-import { Transaction } from '@mysten/sui/transactions';
-import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
-import { config } from '../config/config.js';
+import { contractService } from './contract.js';
 import { logger } from '../utils/logger.js';
 
+/**
+ * SuiService - Legacy wrapper for backward compatibility
+ * Now delegates to ContractService
+ */
 export class SuiService {
   constructor() {
-    this.client = new SuiClient({ url: config.sui.rpcUrl });
-    this.packageId = config.oracle.packageId;
-    this.oracleObjectId = config.oracle.objectId;
-    this.adminCapId = config.oracle.adminCapId;
-
-    // TODO: Load admin keypair from secure storage (env var, keychain, etc.)
-    // For now, this is a placeholder
-    this.adminKeypair = null;
+    this.contractService = contractService;
   }
 
   /**
@@ -24,46 +18,17 @@ export class SuiService {
    */
   async updateEngagementMetrics(ipTokenId, metrics) {
     try {
-      if (!this.packageId || !this.oracleObjectId || !this.adminCapId) {
-        throw new Error('Oracle configuration incomplete. Set PACKAGE_ID, ORACLE_OBJECT_ID, and ADMIN_CAP_ID in .env');
-      }
-
-      if (!this.adminKeypair) {
-        throw new Error('Admin keypair not configured');
-      }
-
-      logger.info(`Updating on-chain metrics for IP token: ${ipTokenId}`);
-
-      const tx = new Transaction();
-
-      tx.moveCall({
-        target: `${this.packageId}::oracle::update_engagement_metrics`,
-        arguments: [
-          tx.object(this.oracleObjectId),
-          tx.object(this.adminCapId),
-          ipTokenId,
-          metrics.average_rating,
-          metrics.total_contributors,
-          metrics.total_engagements,
-          metrics.prediction_accuracy,
-          metrics.growth_rate,
-        ],
+      return await this.contractService.updateEngagementMetrics({
+        ipTokenId,
+        averageRating: metrics.average_rating,
+        totalContributors: metrics.total_contributors,
+        totalEngagements: metrics.total_engagements,
+        predictionAccuracy: metrics.prediction_accuracy,
+        growthRate: metrics.growth_rate,
       });
-
-      const result = await this.client.signAndExecuteTransaction({
-        signer: this.adminKeypair,
-        transaction: tx,
-        options: {
-          showEffects: true,
-          showEvents: true,
-        },
-      });
-
-      logger.info('Transaction successful:', result.digest);
-      return result;
     } catch (error) {
       logger.error('Error updating on-chain metrics:', error);
-      throw new Error(`Failed to update on-chain metrics: ${error.message}`);
+      throw error;
     }
   }
 
@@ -74,12 +39,10 @@ export class SuiService {
    */
   async getEngagementMetrics(ipTokenId) {
     try {
-      // TODO: Implement reading metrics from on-chain
-      // This would query the PriceOracle object
-      throw new Error('Not implemented yet');
+      return await this.contractService.getEngagementMetrics(ipTokenId);
     } catch (error) {
       logger.error('Error getting on-chain metrics:', error);
-      throw new Error(`Failed to get on-chain metrics: ${error.message}`);
+      throw error;
     }
   }
 }
