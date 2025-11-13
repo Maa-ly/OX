@@ -7,6 +7,7 @@
 module odx::datatypes;
 
 use sui::object::{Self, UID, ID};
+use sui::tx_context::TxContext;
 use std::vector;
 
 /// IP Token Metadata
@@ -242,18 +243,18 @@ public fun get_order_ip_token_id(order: &MarketOrder): ID { order.ip_token_id }
 public fun set_order_status(order: &mut MarketOrder, status: u8) { order.status = status }
 public fun set_order_filled_quantity(order: &mut MarketOrder, filled: u64) { order.filled_quantity = filled }
 
-// MarketOrder constructor (for creating orders from other modules)
+// MarketOrder constructor (must be in datatypes since MarketOrder has key)
 public fun create_market_order(
-    id: UID,
     ip_token_id: ID,
     creator: address,
     order_type: u8,
     price: u64,
     quantity: u64,
     created_at: u64,
+    ctx: &mut TxContext,
 ): MarketOrder {
     MarketOrder {
-        id,
+        id: object::new(ctx),
         ip_token_id,
         creator,
         order_type,
@@ -382,15 +383,15 @@ public fun get_metadata_symbol(metadata: &IPTokenMetadata): vector<u8> { metadat
 
 // IPToken constructor (must be in datatypes since IPToken has key)
 public fun create_ip_token(
-    id: UID,
     metadata: IPTokenMetadata,
     total_supply: u64,
     reserve_pool: u64,
     circulating_supply: u64,
     admin: address,
+    ctx: &mut TxContext,
 ): IPToken {
     IPToken {
-        id,
+        id: object::new(ctx),
         metadata,
         total_supply,
         reserve_pool,

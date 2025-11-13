@@ -92,12 +92,12 @@ public fun create_ip_token(
     
     // Create IP token using constructor from datatypes module
     let token = odx::datatypes::create_ip_token(
-        object::new(ctx),
         metadata,
         odx::datatypes::fixed_token_supply(),
         reserve_pool_size,
         odx::datatypes::fixed_token_supply() - reserve_pool_size,
         tx_context::sender(ctx),
+        ctx,
     );
     
     // Add to registry

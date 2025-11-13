@@ -76,7 +76,7 @@ public fun create_buy_order(
     ip_token_id: ID,
     price: u64,
     quantity: u64,
-    payment: Coin<SUI>,
+    mut payment: Coin<SUI>,
     ctx: &mut TxContext,
 ): (MarketOrder, Coin<SUI>) {
     assert!(price > 0, E_INVALID_PRICE);
@@ -89,32 +89,28 @@ public fun create_buy_order(
     let payment_value = coin::value(&payment);
     assert!(payment_value >= total_required, E_INSUFFICIENT_PAYMENT);
     
-    // Create order
-    let order = MarketOrder {
-        id: object::new(ctx),
+    // Create order using constructor from datatypes module
+    let order = odx::datatypes::create_market_order(
         ip_token_id,
-        creator: tx_context::sender(ctx),
-        order_type: odx::datatypes::order_type_buy(),
+        tx_context::sender(ctx),
+        odx::datatypes::order_type_buy(),
         price,
         quantity,
-        filled_quantity: 0,
-        status: odx::datatypes::order_status_active(),
-        created_at: tx_context::epoch_timestamp_ms(ctx),
-    };
+        tx_context::epoch_timestamp_ms(ctx),
+        ctx,
+    );
     
     // Add to buy orders
     let order_id = object::id(&order);
     vector::push_back(&mut marketplace.buy_orders, order_id);
     
-    // Return remaining payment
-    let remaining = payment_value - total_required;
-    let remaining_coin = if (remaining > 0) {
-        coin::split(&mut payment, remaining, ctx)
-    } else {
-        payment
-    };
-    
-    (order, remaining_coin)
+    // Extract the required payment amount and return the remainder
+    let required_coin = coin::split(&mut payment, total_required, ctx);
+    // Store the required payment (would be held by marketplace in production)
+    // For now, we transfer it back to sender as placeholder
+    transfer::public_transfer(required_coin, tx_context::sender(ctx));
+    // Return the order and remaining payment
+    (order, payment)
 }
 
 /// Create a sell order
@@ -139,18 +135,16 @@ public fun create_sell_order(
     assert!(price > 0, E_INVALID_PRICE);
     assert!(quantity > 0, E_INVALID_QUANTITY);
     
-    // Create order
-    let order = MarketOrder {
-        id: object::new(ctx),
+    // Create order using constructor from datatypes module
+    let order = odx::datatypes::create_market_order(
         ip_token_id,
-        creator: tx_context::sender(ctx),
-        order_type: odx::datatypes::order_type_sell(),
+        tx_context::sender(ctx),
+        odx::datatypes::order_type_sell(),
         price,
         quantity,
-        filled_quantity: 0,
-        status: odx::datatypes::order_status_active(),
-        created_at: tx_context::epoch_timestamp_ms(ctx),
-    };
+        tx_context::epoch_timestamp_ms(ctx),
+        ctx,
+    );
     
     // Add to sell orders
     let order_id = object::id(&order);
@@ -187,11 +181,13 @@ public fun execute_buy_order(
     let fee = (total_paid * marketplace.trading_fee_bps) / 10000;
     
     // Update order status
+    let current_quantity = odx::datatypes::get_order_quantity(buy_order);
+    let current_filled = odx::datatypes::get_order_filled_quantity(buy_order);
     if (filled >= remaining_quantity) {
         odx::datatypes::set_order_status(buy_order, odx::datatypes::order_status_filled());
-        odx::datatypes::set_order_filled_quantity(buy_order, odx::datatypes::get_order_quantity(buy_order));
+        odx::datatypes::set_order_filled_quantity(buy_order, current_quantity);
     } else {
-        odx::datatypes::set_order_filled_quantity(buy_order, odx::datatypes::get_order_filled_quantity(buy_order) + filled);
+        odx::datatypes::set_order_filled_quantity(buy_order, current_filled + filled);
     };
     
     OrderExecutionResult {
@@ -220,11 +216,13 @@ public fun execute_sell_order(
     let fee = (total_received * marketplace.trading_fee_bps) / 10000;
     
     // Update order status
+    let current_quantity = odx::datatypes::get_order_quantity(sell_order);
+    let current_filled = odx::datatypes::get_order_filled_quantity(sell_order);
     if (filled >= remaining_quantity) {
         odx::datatypes::set_order_status(sell_order, odx::datatypes::order_status_filled());
-        odx::datatypes::set_order_filled_quantity(sell_order, odx::datatypes::get_order_quantity(sell_order));
+        odx::datatypes::set_order_filled_quantity(sell_order, current_quantity);
     } else {
-        odx::datatypes::set_order_filled_quantity(sell_order, odx::datatypes::get_order_filled_quantity(sell_order) + filled);
+        odx::datatypes::set_order_filled_quantity(sell_order, current_filled + filled);
     };
     
     OrderExecutionResult {
