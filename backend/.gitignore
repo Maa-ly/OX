@@ -1,24 +1,23 @@
 # Dependencies
 node_modules/
-package-lock.json
-yarn.lock
 
 # Environment variables
 .env
 .env.local
 .env.*.local
 
-# Data storage
-data/
-*.db
-*.sqlite
-
 # Logs
 logs/
 *.log
 npm-debug.log*
+pnpm-debug.log*
 
-# OS files
+# Data
+data/
+*.db
+*.sqlite
+
+# OS
 .DS_Store
 Thumbs.db
 
@@ -28,7 +27,7 @@ Thumbs.db
 *.swp
 *.swo
 
-# Build outputs
-dist/
-build/
-
+# Temporary files
+tmp/
+temp/
+*.tmp

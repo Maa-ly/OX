@@ -6,7 +6,16 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 // Load environment variables
-dotenv.config({ path: join(__dirname, '../../.env') });
+// Try loading from backend/.env first, then fall back to root .env
+const backendEnvPath = join(__dirname, '../.env');
+const rootEnvPath = join(__dirname, '../../.env');
+
+// Try backend/.env first (preferred location)
+const envResult = dotenv.config({ path: backendEnvPath });
+// If not found, try root .env
+if (envResult.error && envResult.error.code === 'ENOENT') {
+  dotenv.config({ path: rootEnvPath });
+}
 
 export const config = {
   // Sui Configuration

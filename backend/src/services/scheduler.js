@@ -28,9 +28,12 @@ export class OracleScheduler {
     // Run every hour by default, or use cron expression from config
     const interval = config.update.interval;
     const hours = Math.floor(interval / (60 * 60 * 1000));
-    const cronExpression = `0 */${hours} * * * *`; // Every N hours
+    
+    // Ensure minimum of 1 hour to avoid invalid cron expressions
+    const safeHours = Math.max(1, hours);
+    const cronExpression = `0 */${safeHours} * * * *`;
 
-    logger.info(`Scheduling updates with cron: ${cronExpression}`);
+    logger.info(`Scheduling updates with cron: ${cronExpression} (interval: ${interval}ms, ${safeHours} hours)`);
 
     this.job = cron.schedule(cronExpression, async () => {
       if (this.isRunning) {

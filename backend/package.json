@@ -7,12 +7,12 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
+    "build": "echo 'Backend does not require build step'",
     "test": "node --test tests/**/*.test.js",
     "lint": "eslint src/",
     "format": "prettier --write \"src/**/*.js\"",
     "install:walrus": "suiup install walrus@testnet"
   },
-  "packageManager": "pnpm@9.0.0",
   "keywords": [
     "walrus",
     "sui",

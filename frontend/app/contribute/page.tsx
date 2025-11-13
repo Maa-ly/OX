@@ -1,0 +1,282 @@
+'use client';
+
+import { useWallet } from '@suiet/wallet-kit';
+import { useState, useEffect } from 'react';
+import Link from 'next/link';
+import { mockAPI, type IPToken } from '@/lib/mocks/data';
+import { signContribution, createContribution } from '@/lib/utils/signing';
+
+type ContributionType = 'rating' | 'prediction' | 'meme' | 'review' | 'stake';
+
+export default function Contribute() {
+  const wallet = useWallet();
+  const [tokens, setTokens] = useState<IPToken[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedType, setSelectedType] = useState<ContributionType>('rating');
+  const [selectedToken, setSelectedToken] = useState<string>('');
+  const [submitting, setSubmitting] = useState(false);
+
+  // Form fields
+  const [rating, setRating] = useState<number>(5);
+  const [prediction, setPrediction] = useState('');
+  const [review, setReview] = useState('');
+  const [stake, setStake] = useState<number>(0);
+
+  useEffect(() => {
+    loadTokens();
+  }, []);
+
+  const loadTokens = async () => {
+    setLoading(true);
+    try {
+      const data = await mockAPI.getIPTokens();
+      setTokens(data);
+      if (data.length > 0) {
+        setSelectedToken(data[0].id);
+      }
+    } catch (error) {
+      console.error('Failed to load tokens:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!wallet.connected || !wallet.account?.address || !selectedToken) return;
+
+    setSubmitting(true);
+    try {
+      const token = tokens.find(t => t.id === selectedToken);
+      if (!token) return;
+
+      // Create contribution object
+      const contribution = createContribution({
+        ip_token_id: selectedToken,
+        engagement_type: selectedType,
+        user_wallet: wallet.account.address,
+        rating: selectedType === 'rating' ? rating : undefined,
+        prediction: selectedType === 'prediction' ? prediction : undefined,
+        review: selectedType === 'review' ? review : undefined,
+        stake: selectedType === 'stake' ? stake : undefined,
+      });
+
+      // Sign contribution
+      const signature = await signContribution(contribution, wallet);
+
+      // Submit to backend (mock for now)
+      await mockAPI.submitContribution({
+        ipTokenId: selectedToken,
+        ipTokenName: token.name,
+        type: selectedType,
+        userWallet: wallet.account.address,
+        rating: selectedType === 'rating' ? rating : undefined,
+        prediction: selectedType === 'prediction' ? prediction : undefined,
+        review: selectedType === 'review' ? review : undefined,
+        stake: selectedType === 'stake' ? stake : undefined,
+      });
+
+      // Reset form
+      setRating(5);
+      setPrediction('');
+      setReview('');
+      setStake(0);
+      alert('Contribution submitted successfully!');
+    } catch (error) {
+      console.error('Failed to submit contribution:', error);
+      alert('Failed to submit contribution. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (!wallet.connected) {
+    return (
+      <div className="min-h-screen bg-[#0a0a0f] text-white flex items-center justify-center">
+        <div className="text-center">
+          <h2 className="text-2xl font-bold mb-4">Wallet Not Connected</h2>
+          <p className="text-zinc-400 mb-6">Please connect your wallet to contribute</p>
+          <Link
+            href="/"
+            className="inline-block rounded-lg bg-gradient-to-r from-cyan-500 to-blue-600 px-6 py-3 font-semibold text-white hover:shadow-lg hover:shadow-cyan-500/25 transition-all"
+          >
+            Go to Home
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-[#0a0a0f] text-white">
+      {/* Navigation */}
+      <nav className="border-b border-zinc-800/50 bg-[#0a0a0f]/80 backdrop-blur-xl">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+          <div className="flex h-16 items-center justify-between">
+            <Link href="/" className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-cyan-500 to-blue-600">
+                <span className="text-xl font-bold">O</span>
+              </div>
+              <div>
+                <div className="text-lg font-bold tracking-tight">ODX</div>
+                <div className="text-xs text-zinc-400">Otaku Data Exchange</div>
+              </div>
+            </Link>
+            <div className="flex items-center gap-4">
+              <Link
+                href="/dashboard"
+                className="text-sm font-medium text-zinc-300 transition-colors hover:text-white"
+              >
+                Dashboard
+              </Link>
+              <Link
+                href="/marketplace"
+                className="text-sm font-medium text-zinc-300 transition-colors hover:text-white"
+              >
+                Marketplace
+              </Link>
+            </div>
+          </div>
+        </div>
+      </nav>
+
+      <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 py-8">
+        {/* Header */}
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold tracking-tight mb-2">Contribute to IP Tokens</h1>
+          <p className="text-zinc-400">Share your engagement and help shape the value of your favorite IPs</p>
+        </div>
+
+        {/* Contribution Type Selector */}
+        <div className="mb-6 flex flex-wrap gap-2">
+          {(['rating', 'prediction', 'review', 'stake'] as ContributionType[]).map((type) => (
+            <button
+              key={type}
+              onClick={() => setSelectedType(type)}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors capitalize ${
+                selectedType === type
+                  ? 'bg-cyan-500/20 border border-cyan-500/50 text-cyan-400'
+                  : 'bg-zinc-900/50 border border-zinc-800 text-zinc-300 hover:border-zinc-700'
+              }`}
+            >
+              {type}
+            </button>
+          ))}
+        </div>
+
+        {/* Form */}
+        <form onSubmit={handleSubmit} className="rounded-xl border border-zinc-800 bg-gradient-to-br from-zinc-900/50 to-zinc-900/30 p-6">
+          {/* IP Token Selection */}
+          <div className="mb-6">
+            <label className="block text-sm font-medium text-zinc-300 mb-2">
+              Select IP Token
+            </label>
+            {loading ? (
+              <div className="text-zinc-400">Loading tokens...</div>
+            ) : (
+              <select
+                value={selectedToken}
+                onChange={(e) => setSelectedToken(e.target.value)}
+                className="w-full rounded-lg border border-zinc-800 bg-zinc-900/50 px-4 py-2 text-white focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                required
+              >
+                {tokens.map((token) => (
+                  <option key={token.id} value={token.id}>
+                    {token.name} ({token.symbol})
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          {/* Rating Form */}
+          {selectedType === 'rating' && (
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-zinc-300 mb-2">
+                Rating (1-10)
+              </label>
+              <div className="flex items-center gap-4">
+                <input
+                  type="range"
+                  min="1"
+                  max="10"
+                  value={rating}
+                  onChange={(e) => setRating(Number(e.target.value))}
+                  className="flex-1"
+                />
+                <div className="text-2xl font-bold text-cyan-400 w-12 text-center">{rating}</div>
+              </div>
+            </div>
+          )}
+
+          {/* Prediction Form */}
+          {selectedType === 'prediction' && (
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-zinc-300 mb-2">
+                Your Prediction
+              </label>
+              <textarea
+                value={prediction}
+                onChange={(e) => setPrediction(e.target.value)}
+                placeholder="e.g., Will reach top 3 in popularity next week"
+                className="w-full rounded-lg border border-zinc-800 bg-zinc-900/50 px-4 py-3 text-white placeholder-zinc-500 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                rows={3}
+                required
+              />
+            </div>
+          )}
+
+          {/* Review Form */}
+          {selectedType === 'review' && (
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-zinc-300 mb-2">
+                Your Review
+              </label>
+              <textarea
+                value={review}
+                onChange={(e) => setReview(e.target.value)}
+                placeholder="Share your thoughts about this IP..."
+                className="w-full rounded-lg border border-zinc-800 bg-zinc-900/50 px-4 py-3 text-white placeholder-zinc-500 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                rows={5}
+                required
+              />
+            </div>
+          )}
+
+          {/* Stake Form */}
+          {selectedType === 'stake' && (
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-zinc-300 mb-2">
+                Stake Amount (SUI)
+              </label>
+              <input
+                type="number"
+                min="0"
+                step="0.1"
+                value={stake}
+                onChange={(e) => setStake(Number(e.target.value))}
+                placeholder="0.0"
+                className="w-full rounded-lg border border-zinc-800 bg-zinc-900/50 px-4 py-2 text-white placeholder-zinc-500 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                required
+              />
+            </div>
+          )}
+
+          {/* Submit Button */}
+          <button
+            type="submit"
+            disabled={submitting || !selectedToken}
+            className="w-full rounded-lg bg-gradient-to-r from-cyan-500 to-blue-600 px-6 py-3 font-semibold text-white shadow-lg shadow-cyan-500/25 transition-all hover:shadow-xl hover:shadow-cyan-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {submitting ? 'Submitting...' : 'Submit Contribution'}
+          </button>
+
+          <p className="mt-4 text-xs text-zinc-500 text-center">
+            Your contribution will be signed with your wallet and stored on Walrus decentralized storage
+          </p>
+        </form>
+      </div>
+    </div>
+  );
+}
+

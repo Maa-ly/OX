@@ -6,6 +6,7 @@ import { config } from './config/config.js';
 import { logger } from './utils/logger.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { notFoundHandler } from './middleware/notFoundHandler.js';
+import { findAvailablePort } from './utils/port-finder.js';
 
 // Import routes
 import healthRoutes from './routes/health.js';
@@ -18,7 +19,7 @@ import { OracleScheduler } from './services/scheduler.js';
 import { MetricsCollectorService } from './services/metrics-collector.js';
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const DEFAULT_PORT = parseInt(process.env.PORT || '3000', 10);
 
 // Middleware
 app.use(helmet());
@@ -58,27 +59,56 @@ let metricsCollector = null;
 
 async function startServer() {
   try {
+    logger.info('Starting ODX Oracle Service...');
+    
+    const PORT = await findAvailablePort(DEFAULT_PORT);
+    
+    if (PORT !== DEFAULT_PORT) {
+      logger.info(`Port ${DEFAULT_PORT} is in use, using port ${PORT} instead`);
+    } else {
+      logger.info(`Using port ${PORT}`);
+    }
+    
     // Initialize Metrics Collector
     metricsCollector = new MetricsCollectorService();
+    logger.info('Metrics Collector initialized');
     
     // Set metrics collector in routes
     const { setMetricsCollector } = await import('./routes/oracle.js');
     setMetricsCollector(metricsCollector);
+    logger.info('Routes configured');
     
-    // Initialize Oracle Scheduler
-    scheduler = new OracleScheduler();
-    await scheduler.initialize();
+    try {
+      scheduler = new OracleScheduler();
+      await scheduler.initialize();
+      logger.info('Oracle Scheduler initialized');
+    } catch (schedulerError) {
+      logger.warn('Oracle Scheduler initialization failed (this is OK if smart contracts are not deployed yet):', schedulerError.message);
+    }
 
-    // Start the server
-    app.listen(PORT, () => {
+    // Start the server on the available port
+    const server = app.listen(PORT, () => {
       logger.info(`ODX Oracle Service running on port ${PORT}`);
       logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
       logger.info(`Sui Network: ${config.sui.network}`);
       logger.info(`Walrus Context: ${config.walrus.context}`);
+      logger.info('Server is ready to accept requests');
+    });
+
+    server.on('error', (error) => {
+      logger.error('Server error:', error);
+      if (process.env.NODE_ENV === 'production') {
+        process.exit(1);
+      }
     });
   } catch (error) {
     logger.error('Failed to start server:', error);
-    process.exit(1);
+    logger.error('Error stack:', error.stack);
+    if (process.env.NODE_ENV === 'production') {
+      process.exit(1);
+    } else {
+      throw error;
+    }
   }
 }
 
