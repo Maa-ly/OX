@@ -162,11 +162,15 @@ export async function getTokenPrice(ipTokenId: string): Promise<number | null> {
   if (result.results?.[0]?.returnValues) {
     const returnValue = result.results[0].returnValues[0];
     // Check if Option::some or Option::none
-    if (returnValue[0] === 0) {
+    // returnValue is [type, value] where type is 0 (none) or 1 (some)
+    // TypeScript types this as [number | number[], string]
+    const optionType = typeof returnValue[0] === 'number' ? returnValue[0] : (returnValue[0] as number[])[0];
+    if (optionType === 0) {
       return null; // Option::none
     }
     // Option::some - parse u64
-    return parseU64(returnValue[1]);
+    const value = typeof returnValue[1] === 'string' ? returnValue[1] : (returnValue[1] as any);
+    return parseU64(value);
   }
 
   return null;
@@ -197,10 +201,15 @@ export async function getEngagementMetrics(ipTokenId: string): Promise<any | nul
 
   if (result.results?.[0]?.returnValues) {
     const returnValue = result.results[0].returnValues[0];
-    if (returnValue[0] === 0) {
+    // Check if Option::some or Option::none
+    // returnValue is [type, value] where type is 0 (none) or 1 (some)
+    // TypeScript types this as [number | number[], string | any]
+    const optionType = typeof returnValue[0] === 'number' ? returnValue[0] : (returnValue[0] as number[])[0];
+    if (optionType === 0) {
       return null; // Option::none
     }
-    return returnValue[1]; // Option::some - would need proper parsing
+    // Option::some - return the value (would need proper parsing based on struct type)
+    return returnValue[1];
   }
 
   return null;
@@ -236,10 +245,14 @@ export async function getContributor(
 
   if (result.results?.[0]?.returnValues) {
     const returnValue = result.results[0].returnValues[0];
-    if (returnValue[0] === 0) {
+    // Check if Option::some or Option::none
+    // returnValue is [type, value] where type is 0 (none) or 1 (some)
+    const optionType = Array.isArray(returnValue[0]) ? returnValue[0][0] : returnValue[0];
+    if (optionType === 0) {
       return null; // Option::none
     }
-    return returnValue[1]; // Option::some
+    // Option::some - return the value
+    return Array.isArray(returnValue[1]) ? returnValue[1] : returnValue[1];
   }
 
   return null;
@@ -282,7 +295,7 @@ function parseU64(base64Value: string): number {
   try {
     const buffer = Buffer.from(base64Value, 'base64');
     // Sui uses little-endian u64
-    let value = 0n;
+    let value = BigInt(0);
     for (let i = 0; i < 8; i++) {
       value |= BigInt(buffer[i]) << BigInt(i * 8);
     }

@@ -135,8 +135,8 @@ export async function createBuyOrder(
     ],
   });
 
-  const result = await wallet.signAndExecuteTransaction({
-    transaction: tx,
+  const result = await wallet.signAndExecuteTransactionBlock({
+    transactionBlock: tx,
     options: {
       showEffects: true,
       showObjectChanges: true,
@@ -185,8 +185,8 @@ export async function createSellOrder(
     ],
   });
 
-  const result = await wallet.signAndExecuteTransaction({
-    transaction: tx,
+  const result = await wallet.signAndExecuteTransactionBlock({
+    transactionBlock: tx,
     options: {
       showEffects: true,
       showObjectChanges: true,
@@ -229,8 +229,8 @@ export async function executeBuyOrder(
     ],
   });
 
-  const result = await wallet.signAndExecuteTransaction({
-    transaction: tx,
+  const result = await wallet.signAndExecuteTransactionBlock({
+    transactionBlock: tx,
     options: {
       showEffects: true,
     },
@@ -267,8 +267,8 @@ export async function executeSellOrder(
     ],
   });
 
-  const result = await wallet.signAndExecuteTransaction({
-    transaction: tx,
+  const result = await wallet.signAndExecuteTransactionBlock({
+    transactionBlock: tx,
     options: {
       showEffects: true,
     },
@@ -305,8 +305,8 @@ export async function cancelOrder(
     ],
   });
 
-  const result = await wallet.signAndExecuteTransaction({
-    transaction: tx,
+  const result = await wallet.signAndExecuteTransactionBlock({
+    transactionBlock: tx,
     options: {
       showEffects: true,
     },
@@ -347,8 +347,8 @@ export async function initializeTokenPrice(
     ],
   });
 
-  const result = await wallet.signAndExecuteTransaction({
-    transaction: tx,
+  const result = await wallet.signAndExecuteTransactionBlock({
+    transactionBlock: tx,
     options: {
       showEffects: true,
     },
@@ -398,8 +398,8 @@ export async function updateEngagementMetrics(
     ],
   });
 
-  const result = await wallet.signAndExecuteTransaction({
-    transaction: tx,
+  const result = await wallet.signAndExecuteTransactionBlock({
+    transactionBlock: tx,
     options: {
       showEffects: true,
       showEvents: true,
@@ -437,8 +437,8 @@ export async function recalculatePrice(
     ],
   });
 
-  const result = await wallet.signAndExecuteTransaction({
-    transaction: tx,
+  const result = await wallet.signAndExecuteTransactionBlock({
+    transactionBlock: tx,
     options: {
       showEffects: true,
     },
