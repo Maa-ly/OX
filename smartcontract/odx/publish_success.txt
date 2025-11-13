@@ -1,0 +1,42 @@
+Successfully verified dependencies on-chain against source.
+Transaction Digest: 5AVpGNcrQBSM8Pafv7Rwq6B1ZcecgrQtMtdQGV2YyeMj
+Published Objects:
+  ┌──
+  │ PackageID: 0x535bbe4c02687ff677ab9fda2ba85cf7997a1db4f35eb59109efcc1a7cee8864
+  │ Version: 1
+  │ Digest: 7hJHa4gvXCQQMNGGbPNB6i61bdyJsL9Lv85TavjbzKa
+  │ Modules: datatypes, marketplace, oracle, rewards, token
+  └──
+Created Objects:
+  ┌──
+  │ ObjectID: 0x00577ac682e18c53445cbecf5bd963e737709159789ebacecc7497b24cfa93c1
+  │ ObjectType: 0x535bbe4c02687ff677ab9fda2ba85cf7997a1db4f35eb59109efcc1a7cee8864::oracle::OracleAdminCap
+  └──
+  ┌──
+  │ ObjectID: 0x0f0ac4fbc65faee306da224cfe7a71e3943a18bcc81d063812abb38ca26ece11
+  │ ObjectType: 0x535bbe4c02687ff677ab9fda2ba85cf7997a1db4f35eb59109efcc1a7cee8864::marketplace::Marketplace
+  └──
+  ┌──
+  │ ObjectID: 0x3b320ae36cb6bbcf4503b3aede93c17b5e97fdcf7e9187aaf3641f4e57e02b46
+  │ ObjectType: 0x535bbe4c02687ff677ab9fda2ba85cf7997a1db4f35eb59109efcc1a7cee8864::token::TokenRegistry
+  └──
+  ┌──
+  │ ObjectID: 0x4565bda97f21e43a7fa4f3a9e07ac400ab448fc1f5044a5422fd698b8ceb6936
+  │ ObjectType: 0x535bbe4c02687ff677ab9fda2ba85cf7997a1db4f35eb59109efcc1a7cee8864::oracle::PriceOracle
+  └──
+  ┌──
+  │ ObjectID: 0x5b5c696e057444fa3899b3957d5de8fdc4c9892ee051f57b8616120e7657cd0c
+  │ ObjectType: 0x535bbe4c02687ff677ab9fda2ba85cf7997a1db4f35eb59109efcc1a7cee8864::token::AdminCap
+  └──
+  ┌──
+  │ ObjectID: 0x66775e103c5ea50db38d55c7ec412d1063d23baa1cd6537264c7d19d14c0b03e
+  │ ObjectType: 0x535bbe4c02687ff677ab9fda2ba85cf7997a1db4f35eb59109efcc1a7cee8864::rewards::RewardsRegistry
+  └──
+  ┌──
+  │ ObjectID: 0xc0cfb41e7854ddbc7182f1addc4238874cdfe659e825d8ecdab0826cdae03d06
+  │ ObjectType: 0x535bbe4c02687ff677ab9fda2ba85cf7997a1db4f35eb59109efcc1a7cee8864::rewards::RewardConfig
+  └──
+  ┌──
+  │ ObjectID: 0xea4d3126b1b1fd4de0e7fa81c39b89a3ba655f1ca88b5217fa1bae3fbd92b4dc
+  │ ObjectType: 0x2::package::UpgradeCap
+  └──

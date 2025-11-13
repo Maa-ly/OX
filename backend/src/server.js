@@ -13,6 +13,7 @@ import healthRoutes from './routes/health.js';
 import oracleRoutes from './routes/oracle.js';
 import metricsRoutes from './routes/metrics.js';
 import walrusRoutes from './routes/walrus.js';
+import contractRoutes from './routes/contract.js';
 
 // Import services
 import { OracleScheduler } from './services/scheduler.js';
@@ -33,6 +34,7 @@ app.use('/health', healthRoutes);
 app.use('/api/oracle', oracleRoutes);
 app.use('/api/metrics', metricsRoutes);
 app.use('/api/walrus', walrusRoutes);
+app.use('/api/contract', contractRoutes);
 
 // Root endpoint
 app.get('/', (req, res) => {
@@ -45,6 +47,7 @@ app.get('/', (req, res) => {
       oracle: '/api/oracle',
       metrics: '/api/metrics',
       walrus: '/api/walrus',
+      contract: '/api/contract',
     },
   });
 });

@@ -28,7 +28,8 @@ Currently, no authentication is required. All endpoints are publicly accessible.
 2. [Oracle Endpoints](#oracle-endpoints)
 3. [Walrus Endpoints](#walrus-endpoints)
 4. [Metrics Endpoints](#metrics-endpoints)
-5. [Error Responses](#error-responses)
+5. [Contract Endpoints](#contract-endpoints)
+6. [Error Responses](#error-responses)
 
 ---
 

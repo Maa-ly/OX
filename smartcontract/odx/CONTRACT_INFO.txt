@@ -1,0 +1,85 @@
+========================================
+ODX Smart Contract - Deployment Information
+========================================
+Generated: Thu Nov 13 10:13:36 PST 2025
+Network: Sui Testnet
+Status: ✅ SUCCESSFULLY DEPLOYED AND VERIFIED
+
+PACKAGE INFORMATION
+-------------------
+Package ID: 0x535bbe4c02687ff677ab9fda2ba85cf7997a1db4f35eb59109efcc1a7cee8864
+Version: 1
+Transaction Digest: 5AVpGNcrQBSM8Pafv7Rwq6B1ZcecgrQtMtdQGV2YyeMj
+Package Digest: 7hJHa4gvXCQQMNGGbPNB6i61bdyJsL9Lv85TavjbzKa
+Modules: datatypes, marketplace, oracle, rewards, token
+
+DEPLOYER INFORMATION
+--------------------
+Active Address: 0x6df2465c7b9a88e9769a625b3af0afbf41ab61d86183d85eb5fa5b7bd0549c71
+Network: testnet
+
+MODULES DEPLOYED
+----------------
+1. datatypes - Shared data structures (IPToken, EngagementData, etc.)
+2. token - IP token creation and management (AdminCap, TokenRegistry)
+3. marketplace - Trading functionality (buy/sell orders)
+4. rewards - Contributor tracking and reward distribution
+5. oracle - Price calculation based on engagement metrics
+6. odx - Main library module
+
+✅ ALL MODULES AUTOMATICALLY INITIALIZED DURING DEPLOYMENT!
+
+OBJECT IDs (All Created and Ready to Use)
+----------
+AdminCap: 0x5b5c696e057444fa3899b3957d5de8fdc4c9892ee051f57b8616120e7657cd0c
+TokenRegistry: 0x3b320ae36cb6bbcf4503b3aede93c17b5e97fdcf7e9187aaf3641f4e57e02b46
+Marketplace: 0x0f0ac4fbc65faee306da224cfe7a71e3943a18bcc81d063812abb38ca26ece11
+RewardsRegistry: 0x66775e103c5ea50db38d55c7ec412d1063d23baa1cd6537264c7d19d14c0b03e
+RewardConfig: 0xc0cfb41e7854ddbc7182f1addc4238874cdfe659e825d8ecdab0826cdae03d06
+PriceOracle: 0x4565bda97f21e43a7fa4f3a9e07ac400ab448fc1f5044a5422fd698b8ceb6936
+OracleAdminCap: 0x00577ac682e18c53445cbecf5bd963e737709159789ebacecc7497b24cfa93c1
+UpgradeCap: 0xea4d3126b1b1fd4de0e7fa81c39b89a3ba655f1ca88b5217fa1bae3fbd92b4dc
+
+GAS COST
+--------
+Storage Cost: 119996400 MIST (0.12 SUI)
+Computation Cost: 2000000 MIST (0.002 SUI)
+Total Gas Used: 121018280 MIST (0.121 SUI)
+
+INTERACTION EXAMPLES
+--------------------
+All modules are initialized and ready to use!
+
+Create IP Token:
+  sui client call --package 0x535bbe4c02687ff677ab9fda2ba85cf7997a1db4f35eb59109efcc1a7cee8864 --module token --function create_ip_token \
+    --args "0x5b5c696e057444fa3899b3957d5de8fdc4c9892ee051f57b8616120e7657cd0c" "<name>" "<symbol>" "<description>" "<category>" "<reserve_pool>" \
+    --gas-budget 10000000
+
+Create Buy Order:
+  sui client call --package 0x535bbe4c02687ff677ab9fda2ba85cf7997a1db4f35eb59109efcc1a7cee8864 --module marketplace --function create_buy_order \
+    --args "0x0f0ac4fbc65faee306da224cfe7a71e3943a18bcc81d063812abb38ca26ece11" "<token_id>" "<price>" "<quantity>" "<payment>" \
+    --gas-budget 10000000
+
+Register Engagement:
+  sui client call --package 0x535bbe4c02687ff677ab9fda2ba85cf7997a1db4f35eb59109efcc1a7cee8864 --module rewards --function register_engagement \
+    --args "0x66775e103c5ea50db38d55c7ec412d1063d23baa1cd6537264c7d19d14c0b03e" "<token_id>" "<rating>" "<prediction>" \
+    --gas-budget 10000000
+
+VERIFICATION
+-----------
+✅ Dependencies verified on-chain against source
+✅ Contract source code is verified and visible on Sui Explorer
+
+View on Sui Explorer:
+https://suiexplorer.com/transaction/5AVpGNcrQBSM8Pafv7Rwq6B1ZcecgrQtMtdQGV2YyeMj?network=testnet
+
+View Package:
+https://suiexplorer.com/object/0x535bbe4c02687ff677ab9fda2ba85cf7997a1db4f35eb59109efcc1a7cee8864?network=testnet
+
+Verify Source Code:
+  sui client verify-source 0x535bbe4c02687ff677ab9fda2ba85cf7997a1db4f35eb59109efcc1a7cee8864
+
+========================================
+🎉 CONTRACT SUCCESSFULLY DEPLOYED! 🎉
+All modules initialized and ready to use!
+========================================

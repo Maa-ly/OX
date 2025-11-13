@@ -6,16 +6,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 // Load environment variables
-// Try loading from backend/.env first, then fall back to root .env
-const backendEnvPath = join(__dirname, '../.env');
-const rootEnvPath = join(__dirname, '../../.env');
-
-// Try backend/.env first (preferred location)
-const envResult = dotenv.config({ path: backendEnvPath });
-// If not found, try root .env
-if (envResult.error && envResult.error.code === 'ENOENT') {
-  dotenv.config({ path: rootEnvPath });
-}
+dotenv.config({ path: join(__dirname, '../../.env') });
 
 export const config = {
   // Sui Configuration
@@ -30,11 +21,34 @@ export const config = {
     context: process.env.WALRUS_CONTEXT || 'testnet',
   },
 
-  // Oracle Configuration
+  // Oracle Configuration (NEW DEPLOYMENT)
   oracle: {
-    objectId: process.env.ORACLE_OBJECT_ID,
-    adminCapId: process.env.ADMIN_CAP_ID,
-    packageId: process.env.PACKAGE_ID,
+    objectId: process.env.ORACLE_OBJECT_ID || '0xae22366356c30d091040f522a1fb472dea2fb12009f3ca0ff062c916b939ae85',
+    adminCapId: process.env.ADMIN_CAP_ID || '0x45459e99ab00066294c8a5daa8eaf24ff58bdcaa9e73f063dcf9128e5020cde9',
+    oracleAdminCapId: process.env.ORACLE_ADMIN_CAP_ID || '0x75f2ebc5d5ed1ed3480a869511fae45c0432442c8f5ec2df08107005cf2393de',
+    packageId: process.env.PACKAGE_ID || '0x4991f144c5297f3aee424c2dc66771b1b319cf6b6a3a1f36f62c141a5d9aae9e',
+  },
+
+  // Marketplace Configuration (NEW DEPLOYMENT)
+  marketplace: {
+    objectId: process.env.MARKETPLACE_OBJECT_ID || '0xfb20bbe2e3edb660a76bafd45685824ab8c0e7bb33d067ec94bff1d981f2cddf',
+  },
+
+  // Token Configuration (NEW DEPLOYMENT)
+  token: {
+    registryId: process.env.TOKEN_REGISTRY_ID || '0x469e70a37d7a828712a0ae9c072e26bd4e167594e91901470cfd734348bf8be9',
+    adminCapId: process.env.ADMIN_CAP_ID || '0x45459e99ab00066294c8a5daa8eaf24ff58bdcaa9e73f063dcf9128e5020cde9',
+  },
+
+  // Rewards Configuration (NEW DEPLOYMENT)
+  rewards: {
+    registryId: process.env.REWARDS_REGISTRY_ID || '0x2dff8803979b53ab8938b8acdda687a4f7a06bf90faa0077ee4a510cd420d282',
+    configId: process.env.REWARD_CONFIG_ID || '0x1691ae0ec9b3fb622913061c001f9372076cea709417845d5f26137f2da26eb8',
+  },
+
+  // Price Oracle Configuration (NEW DEPLOYMENT)
+  priceOracle: {
+    objectId: process.env.PRICE_ORACLE_ID || '0xae22366356c30d091040f522a1fb472dea2fb12009f3ca0ff062c916b939ae85',
   },
 
   // Update Configuration
@@ -77,4 +91,3 @@ export function validateConfig() {
 
   return missing.length === 0;
 }
-
