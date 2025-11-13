@@ -24,7 +24,12 @@ const DEFAULT_PORT = parseInt(process.env.PORT || '3000', 10);
 
 // Middleware
 app.use(helmet());
-app.use(cors());
+app.use(cors(
+  {
+    origin: ['http://localhost:3000', process.env.FRONTEND_URL],
+    credentials: true,
+  }
+));
 app.use(morgan('combined', { stream: { write: (message) => logger.info(message.trim()) } }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));

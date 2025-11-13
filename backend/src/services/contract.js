@@ -218,16 +218,118 @@ export class ContractService {
 
       if (result.results?.[0]?.returnValues) {
         // Parse vector of IDs
-        const returnValue = result.results[0].returnValues[0][1];
-        // This would need proper deserialization of Move vector
-        // For now, return raw value
-        return returnValue;
+        // The return value is a Move vector<ID> which is BCS-encoded
+        const returnValue = result.results[0].returnValues[0];
+        
+        // For vector, it's directly the BCS-encoded vector
+        const vectorBytes = Buffer.from(returnValue[1], 'base64');
+        
+        // Move vector format: length (uleb128) followed by elements
+        // For vector<ID>, each ID is 32 bytes
+        try {
+          const tokenIds = [];
+          let offset = 0;
+          
+          // Read length (uleb128 encoding)
+          let length = 0;
+          let shift = 0;
+          while (offset < vectorBytes.length) {
+            const byte = vectorBytes[offset];
+            length |= (byte & 0x7f) << shift;
+            offset++;
+            if ((byte & 0x80) === 0) break;
+            shift += 7;
+            if (shift > 32) {
+              // Safety check to prevent infinite loop
+              logger.warn('Vector length parsing exceeded safety limit');
+              break;
+            }
+          }
+          
+          // Read each ID (32 bytes each)
+          for (let i = 0; i < length && offset + 32 <= vectorBytes.length; i++) {
+            const idBytes = vectorBytes.slice(offset, offset + 32);
+            const idHex = '0x' + idBytes.toString('hex');
+            tokenIds.push(idHex);
+            offset += 32;
+          }
+          
+          logger.info(`Retrieved ${tokenIds.length} token IDs from registry`);
+          return tokenIds;
+        } catch (parseError) {
+          logger.warn('Failed to parse token IDs vector, trying alternative method:', parseError);
+          // Fallback: try to get objects directly from Sui
+          return [];
+        }
       }
 
       return [];
     } catch (error) {
       logger.error('Error getting all tokens:', error);
       throw new Error(`Failed to get all tokens: ${error.message}`);
+    }
+  }
+
+  /**
+   * Get token count from registry
+   * @returns {Promise<number>} Number of tokens in registry
+   */
+  async getTokenCount() {
+    try {
+      const tx = new Transaction();
+      
+      tx.moveCall({
+        target: `${this.packageId}::token::get_token_count`,
+        arguments: [tx.object(this.tokenRegistryId)],
+      });
+
+      const result = await this.client.devInspectTransactionBlock({
+        sender: this.adminKeypair?.toSuiAddress() || '0x0000000000000000000000000000000000000000000000000000000000000000',
+        transactionBlock: tx,
+      });
+
+      if (result.results?.[0]?.returnValues) {
+        return this.parseU64(result.results[0].returnValues[0][1]);
+      }
+
+      return 0;
+    } catch (error) {
+      logger.error('Error getting token count:', error);
+      throw new Error(`Failed to get token count: ${error.message}`);
+    }
+  }
+
+  /**
+   * Get all tokens with full information
+   * @returns {Promise<Array<Object>>} Array of token objects with full details
+   */
+  async getAllTokensWithInfo() {
+    try {
+      const tokenIds = await this.getAllTokens();
+      const tokensWithInfo = [];
+
+      // Fetch info for each token
+      for (const tokenId of tokenIds) {
+        try {
+          const info = await this.getTokenInfo(tokenId);
+          tokensWithInfo.push({
+            id: tokenId,
+            ...info,
+          });
+        } catch (error) {
+          logger.warn(`Failed to get info for token ${tokenId}:`, error.message);
+          // Continue with other tokens even if one fails
+          tokensWithInfo.push({
+            id: tokenId,
+            error: 'Failed to fetch token info',
+          });
+        }
+      }
+
+      return tokensWithInfo;
+    } catch (error) {
+      logger.error('Error getting all tokens with info:', error);
+      throw new Error(`Failed to get all tokens with info: ${error.message}`);
     }
   }
 

@@ -62,14 +62,47 @@ router.get('/tokens/:tokenId', async (req, res, next) => {
 /**
  * Get all tokens
  * GET /contract/tokens
+ * 
+ * Query parameters:
+ * - `detailed` (boolean, optional) - If true, returns full token info for each token
  */
 router.get('/tokens', async (req, res, next) => {
   try {
-    const tokens = await contractService.getAllTokens();
+    const { detailed } = req.query;
+    
+    if (detailed === 'true' || detailed === '1') {
+      // Return full token details
+      const tokens = await contractService.getAllTokensWithInfo();
+      res.json({
+        success: true,
+        count: tokens.length,
+        tokens,
+      });
+    } else {
+      // Return just token IDs
+      const tokens = await contractService.getAllTokens();
+      res.json({
+        success: true,
+        count: tokens.length,
+        tokens,
+      });
+    }
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * Get token count
+ * GET /contract/tokens/count
+ */
+router.get('/tokens/count', async (req, res, next) => {
+  try {
+    const count = await contractService.getTokenCount();
 
     res.json({
       success: true,
-      tokens,
+      count,
     });
   } catch (error) {
     next(error);

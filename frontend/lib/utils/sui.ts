@@ -1,9 +1,11 @@
 /**
  * Frontend utilities for Sui blockchain interactions
  * These functions handle client-side Sui operations
+ * Merged from src/lib/sui.ts with improvements
  */
 
 import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
+import { SUI_RPC_URL } from './constants';
 
 /**
  * Get Sui client for the specified network
@@ -14,6 +16,13 @@ import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 export function getSuiClient(network: 'testnet' | 'mainnet' | 'devnet' = 'testnet'): SuiClient {
   return new SuiClient({ url: getFullnodeUrl(network) });
 }
+
+/**
+ * Default Sui client instance using configured RPC URL
+ */
+export const suiClient = new SuiClient({
+  url: SUI_RPC_URL,
+});
 
 /**
  * Format Sui address for display

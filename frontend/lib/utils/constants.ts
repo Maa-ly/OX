@@ -39,6 +39,16 @@ export const PRICE_ORACLE_ID =
   process.env.NEXT_PUBLIC_PRICE_ORACLE_ID ||
   '0xae22366356c30d091040f522a1fb472dea2fb12009f3ca0ff062c916b939ae85';
 
+// Admin Capability IDs (for admin-only operations)
+// These are typically not exposed to frontend, but needed for admin operations
+export const ADMIN_CAP_ID =
+  process.env.NEXT_PUBLIC_ADMIN_CAP_ID ||
+  '0x45459e99ab00066294c8a5daa8eaf24ff58bdcaa9e73f063dcf9128e5020cde9';
+
+export const ORACLE_ADMIN_CAP_ID =
+  process.env.NEXT_PUBLIC_ORACLE_ADMIN_CAP_ID ||
+  '0x75f2ebc5d5ed1ed3480a869511fae45c0432442c8f5ec2df08107005cf2393de';
+
 // Backend API URL
 export const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000';
