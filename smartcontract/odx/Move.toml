@@ -1,0 +1,7 @@
+[package]
+name = "odx"
+edition = "2024.beta"
+
+[addresses]
+odx = "0x0"
+
