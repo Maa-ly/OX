@@ -20,16 +20,72 @@
 - Data is **immutable** and **timestamped**
 - Users can verify their contributions independently
 
-**Example:**
+**Examples of Contributions Stored on Walrus:**
+
+**Rating:**
 ```json
 {
   "ip": "Chainsaw Man",
+  "engagement_type": "rating",
   "rating": 10,
-  "prediction": "Will trend #1 next week",
-  "user_wallet": "0x6df2465c7b9a88e9769a625b3af0afbf41ab61d86183d85eb5fa5b7bd0549c71",
-  "signature": "0xabc123...",  // Cryptographic proof of ownership
+  "user_wallet": "0x6df...",
+  "signature": "0xabc123...",
   "timestamp": 1736629200,
-  "walrus_cid": "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3..."  // Content ID on Walrus
+  "walrus_cid": "bafybeigdyrzt5sfp7..."
+}
+```
+
+**Meme/Post:**
+```json
+{
+  "ip": "One Piece",
+  "engagement_type": "meme",
+  "content": "meme_image_cid",
+  "caption": "When Luffy finally becomes Pirate King",
+  "user_wallet": "0x6df...",
+  "signature": "0xdef456...",
+  "timestamp": 1736629200,
+  "walrus_cid": "bafybeigdyrzt5sfp7..."
+}
+```
+
+**Episode Prediction:**
+```json
+{
+  "ip": "Solo Leveling",
+  "engagement_type": "episode_prediction",
+  "prediction": "Episode 12 releases on Dec 25, 2024",
+  "user_wallet": "0x6df...",
+  "signature": "0xghi789...",
+  "timestamp": 1736629200,
+  "walrus_cid": "bafybeigdyrzt5sfp7..."
+}
+```
+
+**Token Price Prediction:**
+```json
+{
+  "ip_token_id": "0x4e5dddb28eb25df63cb8b3d8be8f3a16bd40e7a044e7809bc9eb19cbc9cd3e2d",
+  "engagement_type": "price_prediction",
+  "prediction": "Will rise 30% this week",
+  "stake_amount": 1000,
+  "user_wallet": "0x6df...",
+  "signature": "0xjkl012...",
+  "timestamp": 1736629200,
+  "walrus_cid": "bafybeigdyrzt5sfp7..."
+}
+```
+
+**Stake on Prediction:**
+```json
+{
+  "prediction_cid": "bafybeigdyrzt5sfp7...",
+  "engagement_type": "stake",
+  "stake_amount": 500,
+  "user_wallet": "0x6df...",
+  "signature": "0xmno345...",
+  "timestamp": 1736629200,
+  "walrus_cid": "bafybeigdyrzt5sfp7..."
 }
 ```
 
@@ -128,16 +184,27 @@ User Engagement → Stored on Walrus → Oracle Reads → Aggregates → Updates
 
 ## Key Use Cases
 
-### Use Case 1: User Submits Rating
+### Use Case 1: User Contributes (Multiple Ways!)
 
-**Step-by-Step:**
+**Step-by-Step - Rating:**
 1. User connects wallet to ODX frontend
 2. User rates "Solo Leveling" as 9/10
+3. Frontend creates engagement object with rating
+4. User signs the data with their wallet private key
+5. Signed data uploaded to Walrus → Returns CID
+6. Frontend calls smart contract `register_engagement()` with CID
+7. Oracle service later reads from Walrus, verifies signature, aggregates
+
+**Step-by-Step - Posting Meme:**
+1. User connects wallet to ODX frontend
+2. User uploads meme about "Chainsaw Man"
 3. Frontend creates engagement object:
    ```json
    {
      "ip_token_id": "0x123...",
-     "rating": 9,
+     "engagement_type": "meme",
+     "content_cid": "bafybeigdyrzt5sfp7...",
+     "caption": "When Denji meets Power",
      "user_wallet": "0x6df...",
      "timestamp": 1736629200
    }
@@ -145,7 +212,29 @@ User Engagement → Stored on Walrus → Oracle Reads → Aggregates → Updates
 4. User signs the data with their wallet private key
 5. Signed data uploaded to Walrus → Returns CID
 6. Frontend calls smart contract `register_engagement()` with CID
-7. Oracle service later reads from Walrus, verifies signature, aggregates
+7. If meme goes viral, it significantly boosts engagement metrics!
+
+**Step-by-Step - Making Prediction:**
+1. User connects wallet to ODX frontend
+2. User predicts: "One Piece Episode 1100 releases Dec 15"
+3. User optionally stakes 100 tokens on this prediction
+4. Frontend creates engagement object with prediction and stake
+5. User signs the data with their wallet private key
+6. Signed data uploaded to Walrus → Returns CID
+7. Frontend calls smart contract `register_engagement()` with CID
+8. Oracle tracks prediction accuracy over time
+9. If accurate, user gets bonus rewards!
+
+**Step-by-Step - Token Price Prediction:**
+1. User connects wallet to ODX frontend
+2. User predicts: "Chainsaw Man token will rise 30% this week"
+3. User stakes 500 tokens on this prediction
+4. Frontend creates engagement object with price prediction and stake
+5. User signs the data with their wallet private key
+6. Signed data uploaded to Walrus → Returns CID
+7. Frontend calls smart contract `register_engagement()` with CID
+8. Prediction affects market sentiment and token price
+9. If accurate, user wins staked tokens + rewards!
 
 ### Use Case 2: Early Contributor Verification
 
@@ -161,56 +250,150 @@ User Engagement → Stored on Walrus → Oracle Reads → Aggregates → Updates
 
 **Without Walrus:** Can't prove who engaged first - could be gamed
 
-### Use Case 3: Price Calculation
+### Use Case 3: Price Calculation (ALL Contributions Count!)
 
 **Scenario:** "One Piece" token price needs to update
 
 **Process:**
-1. Oracle service queries Walrus for all "One Piece" engagements
-2. Calculates metrics:
+1. Oracle service queries Walrus for ALL "One Piece" contributions:
+   - All ratings and reviews
+   - All memes and fun posts
+   - All episode predictions
+   - All token price predictions
+   - All stakes on predictions
+   - All shares and promotions
+2. Calculates comprehensive metrics:
    - Average rating across all users
    - Total number of unique contributors
-   - Engagement growth rate (new engagements this week vs last week)
+   - Number of memes posted (viral memes weighted higher)
+   - Number of posts created
+   - Number of predictions made
+   - Total stakes placed (shows community confidence)
+   - Engagement growth rate (new contributions this week vs last week)
    - Prediction accuracy (how many predictions came true)
+   - Viral content score (memes/posts with high engagement)
 3. Oracle calls `update_engagement_metrics()` on smart contract
 4. Smart contract recalculates price:
    ```
    new_price = base_price * (1 + growth_rate * multiplier)
+   
+   Growth rate includes:
+   - Rating growth
+   - Meme/post engagement
+   - Prediction activity
+   - Stake volume
+   - Viral content impact
    ```
 5. Updated price feeds into marketplace
 
 **Why Walrus Matters:** 
 - Can't fake historical data (it's on Walrus with signatures)
-- Can verify metrics independently
-- Price reflects real community engagement
+- Can verify ALL contributions independently
+- Price reflects TOTAL community engagement (not just ratings!)
+- Memes, posts, predictions, stakes - everything affects price
+- Dynamic platform where all otakus can contribute in their own way
 
 ## Technical Integration Points
 
 ### 1. Data Structure on Walrus
 
-**Engagement Data Format:**
+**Engagement Data Format (Comprehensive):**
+
+**Rating/Review:**
 ```json
 {
   "ip_token_id": "0x4e5dddb28eb25df63cb8b3d8be8f3a16bd40e7a044e7809bc9eb19cbc9cd3e2d",
   "user_wallet": "0x6df2465c7b9a88e9769a625b3af0afbf41ab61d86183d85eb5fa5b7bd0549c71",
-  "engagement_type": 0,  // 0=rating, 1=prediction, 2=vote, 3=review
+  "engagement_type": "rating",  // or "review"
   "rating": 9,
-  "prediction": "Will reach top 3 next week",
-  "prediction_hash": "0xabc123...",  // Hash of prediction text
+  "review_text": "Amazing anime!",
   "timestamp": 1736629200,
-  "signature": "0xdef456...",  // Wallet signature of the data
-  "walrus_cid": "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3..."
+  "signature": "0xdef456...",
+  "walrus_cid": "bafybeigdyrzt5sfp7..."
+}
+```
+
+**Meme/Post:**
+```json
+{
+  "ip_token_id": "0x4e5dddb28eb25df63cb8b3d8be8f3a16bd40e7a044e7809bc9eb19cbc9cd3e2d",
+  "user_wallet": "0x6df...",
+  "engagement_type": "meme",  // or "post"
+  "content_cid": "bafybeigdyrzt5sfp7...",  // Image/video CID
+  "caption": "When Denji meets Power",
+  "tags": ["funny", "chainsaw-man"],
+  "timestamp": 1736629200,
+  "signature": "0xdef456...",
+  "walrus_cid": "bafybeigdyrzt5sfp7..."
+}
+```
+
+**Episode Prediction:**
+```json
+{
+  "ip_token_id": "0x4e5dddb28eb25df63cb8b3d8be8f3a16bd40e7a044e7809bc9eb19cbc9cd3e2d",
+  "user_wallet": "0x6df...",
+  "engagement_type": "episode_prediction",
+  "prediction": "Episode 12 releases on Dec 25, 2024",
+  "prediction_hash": "0xabc123...",
+  "stake_amount": 100,  // Optional stake
+  "timestamp": 1736629200,
+  "signature": "0xdef456...",
+  "walrus_cid": "bafybeigdyrzt5sfp7..."
+}
+```
+
+**Token Price Prediction:**
+```json
+{
+  "ip_token_id": "0x4e5dddb28eb25df63cb8b3d8be8f3a16bd40e7a044e7809bc9eb19cbc9cd3e2d",
+  "user_wallet": "0x6df...",
+  "engagement_type": "price_prediction",
+  "prediction": "Will rise 30% this week",
+  "prediction_type": "rise",  // or "dip"
+  "predicted_percentage": 30,
+  "stake_amount": 500,
+  "timestamp": 1736629200,
+  "signature": "0xdef456...",
+  "walrus_cid": "bafybeigdyrzt5sfp7..."
+}
+```
+
+**Stake on Prediction:**
+```json
+{
+  "prediction_cid": "bafybeigdyrzt5sfp7...",  // CID of prediction being staked on
+  "user_wallet": "0x6df...",
+  "engagement_type": "stake",
+  "stake_amount": 200,
+  "timestamp": 1736629200,
+  "signature": "0xdef456...",
+  "walrus_cid": "bafybeigdyrzt5sfp7..."
 }
 ```
 
 ### 2. Oracle Service Responsibilities
 
 The Oracle service (backend) must:
-- **Query Walrus**: Fetch all engagements for an IP token
+- **Query Walrus**: Fetch ALL contributions for an IP token:
+  - Ratings and reviews
+  - Memes and fun posts
+  - Episode predictions
+  - Token price predictions
+  - Stakes on predictions
+  - Shares and promotions
 - **Verify Signatures**: Ensure data wasn't tampered with
-- **Aggregate Metrics**: Calculate averages, counts, growth rates
+- **Aggregate Comprehensive Metrics**:
+  - Average ratings
+  - Total contributors
+  - Meme/post counts (viral content weighted)
+  - Prediction counts and accuracy
+  - Total stake volume
+  - Engagement growth rates
+  - Viral content scores
 - **Update On-Chain**: Call smart contract functions to update metrics
 - **Handle Errors**: Deal with missing data, invalid signatures, etc.
+- **Calculate Price Impact**: Determine how ALL contributions affect token price
 
 ### 3. Smart Contract Integration
 
@@ -299,34 +482,50 @@ The Oracle service (backend) must:
 
 **Walrus is not optional—it's the foundation of ODX's value proposition:**
 
-1. **Data Ownership**: Users truly own their engagement data
+1. **Data Ownership**: Users truly own ALL their contributions (ratings, memes, posts, predictions, stakes)
 2. **Trust & Verification**: Cryptographic proof prevents gaming
-3. **Price Integrity**: Token prices based on real, verifiable data
+3. **Price Integrity**: Token prices based on TOTAL community engagement (memes, posts, predictions, stakes, ratings - everything!)
 4. **Fair Rewards**: Attribution and rewards can't be disputed
 5. **Decentralization**: Platform can't manipulate or censor data
+6. **Dynamic Platform**: All otakus can contribute in their own way - memes, predictions, posts, stakes - and ALL contributions affect token price
 
-Without Walrus, ODX would be just another centralized platform where the company owns user data. With Walrus, ODX becomes a true decentralized data market where users own their contributions and token prices reflect genuine community engagement.
+**The Goal:** Make ODX the biggest, most dynamic platform for all otakus! Every contribution matters:
+- Your meme can go viral and boost the token price
+- Your prediction can be accurate and earn rewards
+- Your stake shows confidence and affects market sentiment
+- Your post can spark discussions and increase engagement
+- Your rating contributes to overall IP score
+
+Without Walrus, ODX would be just another centralized platform where the company owns user data. With Walrus, ODX becomes a true decentralized data market where users own their contributions (ALL types - not just ratings!) and token prices reflect genuine, comprehensive community engagement.
 
 ---
 
 ## Quick Reference
 
-**What Walrus Stores:**
-- Individual user engagements (ratings, predictions, votes, reviews)
+**What Walrus Stores (ALL Contribution Types):**
+- Ratings and reviews
+- Memes and fun posts (images, videos, text)
+- Episode release predictions
+- Token price predictions (dips/rises)
+- Stakes on predictions
+- Shares and promotions
+- Community discussions
 - Wallet signatures proving ownership
 - Timestamps for chronological ordering
 - IP token associations
 
 **What Smart Contracts Store:**
 - Aggregated metrics (averages, counts, growth rates)
-- Token prices
+- Token prices (affected by ALL contributions)
 - Contributor records
 - Reward distributions
 - Market orders
 
 **The Bridge:**
-- Oracle service reads from Walrus
-- Aggregates and verifies data
+- Oracle service reads ALL contributions from Walrus
+- Aggregates and verifies ALL data types
+- Calculates comprehensive metrics (memes, posts, predictions, stakes, ratings)
 - Updates smart contracts with metrics
-- Smart contracts calculate prices and distribute rewards
+- Smart contracts calculate prices based on TOTAL engagement
+- Smart contracts distribute rewards for ALL contribution types
 
