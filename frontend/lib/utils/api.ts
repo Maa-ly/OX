@@ -102,3 +102,63 @@ export const contractAPI = {
   },
 };
 
+/**
+ * IP Token interface
+ */
+export interface IPToken {
+  id: string;
+  name: string;
+  symbol: string;
+  description?: string;
+  category?: 'anime' | 'manga' | 'manhwa';
+  totalSupply?: number;
+  reservePool?: number;
+  circulatingSupply?: number;
+  currentPrice?: number;
+  priceChange24h?: number;
+  imageUrl?: string;
+}
+
+/**
+ * Get all IP tokens from the backend
+ * 
+ * @param detailed - If true, returns full token information. Default: true
+ * @returns Promise with tokens array
+ */
+export async function getIPTokens(detailed: boolean = true): Promise<IPToken[]> {
+  const url = `${API_BASE}/api/contract/tokens${detailed ? '?detailed=true' : ''}`;
+  const response = await fetch(url);
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+    throw new Error(error.error || `Failed to fetch tokens: ${response.statusText}`);
+  }
+
+  const data = await response.json();
+  
+  // Transform backend response to frontend format
+  if (detailed && data.tokens && Array.isArray(data.tokens)) {
+    return data.tokens.map((token: any) => ({
+      id: token.id || token.tokenId,
+      name: token.name || 'Unknown',
+      symbol: token.symbol || 'UNK',
+      description: token.description,
+      category: token.category === 0 ? 'anime' : token.category === 1 ? 'manga' : token.category === 2 ? 'manhwa' : undefined,
+      totalSupply: token.totalSupply,
+      reservePool: token.reservePool,
+      circulatingSupply: token.circulatingSupply,
+      currentPrice: token.currentPrice,
+      priceChange24h: token.priceChange24h,
+    }));
+  } else if (data.tokens && Array.isArray(data.tokens)) {
+    // If just IDs, return minimal format
+    return data.tokens.map((tokenId: string) => ({
+      id: tokenId,
+      name: 'Token',
+      symbol: 'TKN',
+    }));
+  }
+
+  return [];
+}
+

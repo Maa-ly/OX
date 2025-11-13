@@ -21,27 +21,11 @@ import {
 /**
  * Wallet interface for contract interactions
  * Compatible with Suiet Wallet Kit's useWallet() hook
+ * 
+ * Note: Using `any` for the wallet parameter to avoid type conflicts
+ * between different versions of @mysten/sui packages
  */
-export interface WalletAdapter {
-  account?: {
-    address: string;
-  };
-  connected: boolean;
-  // Suiet Wallet Kit uses signAndExecuteTransactionBlock
-  signAndExecuteTransactionBlock: (params: {
-    transactionBlock: Transaction;
-    options?: {
-      showEffects?: boolean;
-      showEvents?: boolean;
-      showObjectChanges?: boolean;
-    };
-  }) => Promise<{
-    digest: string;
-    effects?: any;
-    events?: any;
-    objectChanges?: any;
-  }>;
-}
+export type WalletAdapter = any;
 
 /**
  * Create an IP token (ADMIN ONLY - requires AdminCap)
@@ -81,8 +65,9 @@ export async function createIPToken(
     ],
   });
 
+  // Suiet Wallet Kit's signAndExecuteTransactionBlock signature
   const result = await wallet.signAndExecuteTransactionBlock({
-    transactionBlock: tx,
+    transactionBlock: tx as any, // Type cast to avoid version conflicts
     options: {
       showEffects: true,
       showEvents: true,
@@ -136,7 +121,7 @@ export async function createBuyOrder(
   });
 
   const result = await wallet.signAndExecuteTransactionBlock({
-    transactionBlock: tx,
+    transactionBlock: tx as any, // Type cast to avoid version conflicts
     options: {
       showEffects: true,
       showObjectChanges: true,
@@ -186,7 +171,7 @@ export async function createSellOrder(
   });
 
   const result = await wallet.signAndExecuteTransactionBlock({
-    transactionBlock: tx,
+    transactionBlock: tx as any, // Type cast to avoid version conflicts
     options: {
       showEffects: true,
       showObjectChanges: true,
@@ -230,7 +215,7 @@ export async function executeBuyOrder(
   });
 
   const result = await wallet.signAndExecuteTransactionBlock({
-    transactionBlock: tx,
+    transactionBlock: tx as any, // Type cast to avoid version conflicts
     options: {
       showEffects: true,
     },
@@ -268,7 +253,7 @@ export async function executeSellOrder(
   });
 
   const result = await wallet.signAndExecuteTransactionBlock({
-    transactionBlock: tx,
+    transactionBlock: tx as any, // Type cast to avoid version conflicts
     options: {
       showEffects: true,
     },
@@ -306,7 +291,7 @@ export async function cancelOrder(
   });
 
   const result = await wallet.signAndExecuteTransactionBlock({
-    transactionBlock: tx,
+    transactionBlock: tx as any, // Type cast to avoid version conflicts
     options: {
       showEffects: true,
     },
@@ -348,7 +333,7 @@ export async function initializeTokenPrice(
   });
 
   const result = await wallet.signAndExecuteTransactionBlock({
-    transactionBlock: tx,
+    transactionBlock: tx as any, // Type cast to avoid version conflicts
     options: {
       showEffects: true,
     },
@@ -399,7 +384,7 @@ export async function updateEngagementMetrics(
   });
 
   const result = await wallet.signAndExecuteTransactionBlock({
-    transactionBlock: tx,
+    transactionBlock: tx as any, // Type cast to avoid version conflicts
     options: {
       showEffects: true,
       showEvents: true,
@@ -438,7 +423,7 @@ export async function recalculatePrice(
   });
 
   const result = await wallet.signAndExecuteTransactionBlock({
-    transactionBlock: tx,
+    transactionBlock: tx as any, // Type cast to avoid version conflicts
     options: {
       showEffects: true,
     },
