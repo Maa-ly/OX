@@ -2,15 +2,15 @@ import { logger } from '../utils/logger.js';
 
 export class AggregationService {
   /**
-   * Aggregate metrics from contributions
+   * Aggregate metrics from contributions (Walrus data)
    * @param {Array} contributions - Array of verified contributions
-   * @returns {Object} Aggregated metrics
+   * @returns {Object} Aggregated metrics from user contributions
    */
   aggregateMetrics(contributions) {
     logger.info(`Aggregating metrics from ${contributions.length} contributions`);
 
     const metrics = {
-      // Basic metrics
+      // Basic metrics (from Walrus - user contributions)
       average_rating: this.calculateAverageRating(contributions),
       total_contributors: this.countUniqueContributors(contributions),
       total_engagements: contributions.length,
@@ -39,6 +39,181 @@ export class AggregationService {
 
     logger.debug('Aggregated metrics:', metrics);
     return metrics;
+  }
+
+  /**
+   * Combine Walrus (user) metrics with Nautilus (external) metrics
+   * Creates comprehensive metrics that reflect both community engagement and external truth
+   * 
+   * @param {Object} walrusMetrics - Metrics from user contributions (Walrus)
+   * @param {Array} nautilusMetrics - Array of signed metrics from external sources (Nautilus)
+   * @returns {Object} Combined metrics
+   */
+  combineMetrics(walrusMetrics, nautilusMetrics = []) {
+    logger.info(`Combining Walrus metrics with ${nautilusMetrics.length} Nautilus source(s)`);
+
+    // Aggregate external metrics from multiple sources
+    const externalMetrics = this.aggregateExternalMetrics(nautilusMetrics);
+
+    // Combine user and external metrics
+    const combined = {
+      // User metrics (from Walrus)
+      user_average_rating: walrusMetrics.average_rating || 0,
+      user_total_contributors: walrusMetrics.total_contributors || 0,
+      user_total_engagements: walrusMetrics.total_engagements || 0,
+      user_growth_rate: walrusMetrics.growth_rate || 0,
+      user_viral_score: walrusMetrics.viral_content_score || 0,
+      user_prediction_accuracy: walrusMetrics.prediction_accuracy || 0,
+
+      // External metrics (from Nautilus)
+      external_average_rating: externalMetrics.average_rating || 0,
+      external_popularity_score: externalMetrics.popularity_score || 0,
+      external_member_count: externalMetrics.member_count || 0,
+      external_trending_score: externalMetrics.trending_score || 0,
+      external_sources_count: nautilusMetrics.length,
+
+      // Combined metrics (weighted average)
+      combined_rating: this.combineRatings(
+        walrusMetrics.average_rating,
+        externalMetrics.average_rating,
+        0.6, // 60% weight on user data, 40% on external
+      ),
+      combined_popularity: this.combinePopularity(
+        walrusMetrics.total_engagements,
+        externalMetrics.popularity_score,
+        0.6,
+      ),
+      combined_growth_rate: this.combineGrowthRates(
+        walrusMetrics.growth_rate,
+        externalMetrics.trending_score,
+        0.6,
+      ),
+
+      // Verification data
+      nautilus_signatures: nautilusMetrics.map((m) => ({
+        source: m.source,
+        signature: m.signature,
+        timestamp: m.timestamp,
+      })),
+      walrus_verified: true,
+      nautilus_verified: nautilusMetrics.length > 0,
+
+      // Timestamps
+      last_updated: Date.now(),
+    };
+
+    logger.debug('Combined metrics:', combined);
+    return combined;
+  }
+
+  /**
+   * Aggregate metrics from multiple Nautilus sources
+   * @param {Array} nautilusMetrics - Array of signed metrics from different sources
+   * @returns {Object} Aggregated external metrics
+   */
+  aggregateExternalMetrics(nautilusMetrics) {
+    if (nautilusMetrics.length === 0) {
+      return {
+        average_rating: 0,
+        popularity_score: 0,
+        member_count: 0,
+        trending_score: 0,
+      };
+    }
+
+    // Average ratings from all sources
+    const ratings = nautilusMetrics
+      .map((m) => m.metrics?.average_rating || m.metrics?.rating || 0)
+      .filter((r) => r > 0);
+
+    const averageRating = ratings.length > 0
+      ? Math.floor(ratings.reduce((a, b) => a + b, 0) / ratings.length)
+      : 0;
+
+    // Sum popularity scores
+    const popularityScores = nautilusMetrics
+      .map((m) => m.metrics?.popularity_score || m.metrics?.popularity || 0)
+      .filter((p) => p > 0);
+
+    const popularityScore = popularityScores.length > 0
+      ? Math.floor(popularityScores.reduce((a, b) => a + b, 0) / popularityScores.length)
+      : 0;
+
+    // Sum member counts
+    const memberCount = nautilusMetrics.reduce(
+      (sum, m) => sum + (m.metrics?.member_count || m.metrics?.members || 0),
+      0
+    );
+
+    // Average trending scores
+    const trendingScores = nautilusMetrics
+      .map((m) => m.metrics?.trending_score || m.metrics?.trending || 0)
+      .filter((t) => t > 0);
+
+    const trendingScore = trendingScores.length > 0
+      ? Math.floor(trendingScores.reduce((a, b) => a + b, 0) / trendingScores.length)
+      : 0;
+
+    return {
+      average_rating: averageRating,
+      popularity_score: popularityScore,
+      member_count: memberCount,
+      trending_score: trendingScore,
+    };
+  }
+
+  /**
+   * Combine user and external ratings with weights
+   * @param {number} userRating - User average rating (scaled by 100)
+   * @param {number} externalRating - External average rating (scaled by 100)
+   * @param {number} userWeight - Weight for user data (0-1)
+   * @returns {number} Combined rating (scaled by 100)
+   */
+  combineRatings(userRating, externalRating, userWeight = 0.6) {
+    if (userRating === 0 && externalRating === 0) return 0;
+    if (userRating === 0) return externalRating;
+    if (externalRating === 0) return userRating;
+
+    const combined = (userRating * userWeight) + (externalRating * (1 - userWeight));
+    return Math.floor(combined);
+  }
+
+  /**
+   * Combine user engagement with external popularity
+   * @param {number} userEngagements - Total user engagements
+   * @param {number} externalPopularity - External popularity score
+   * @param {number} userWeight - Weight for user data
+   * @returns {number} Combined popularity score
+   */
+  combinePopularity(userEngagements, externalPopularity, userWeight = 0.6) {
+    // Normalize user engagements to 0-10000 scale (assuming max 100k engagements)
+    const normalizedUser = Math.min((userEngagements / 100000) * 10000, 10000);
+    
+    if (normalizedUser === 0 && externalPopularity === 0) return 0;
+    if (normalizedUser === 0) return externalPopularity;
+    if (externalPopularity === 0) return normalizedUser;
+
+    const combined = (normalizedUser * userWeight) + (externalPopularity * (1 - userWeight));
+    return Math.floor(combined);
+  }
+
+  /**
+   * Combine user growth rate with external trending
+   * @param {number} userGrowthRate - User growth rate (scaled by 100)
+   * @param {number} externalTrending - External trending score
+   * @param {number} userWeight - Weight for user data
+   * @returns {number} Combined growth rate (scaled by 100)
+   */
+  combineGrowthRates(userGrowthRate, externalTrending, userWeight = 0.6) {
+    // Normalize external trending to growth rate scale
+    const normalizedExternal = Math.min((externalTrending / 100) * 10000, 10000);
+    
+    if (userGrowthRate === 0 && normalizedExternal === 0) return 0;
+    if (userGrowthRate === 0) return normalizedExternal;
+    if (normalizedExternal === 0) return userGrowthRate;
+
+    const combined = (userGrowthRate * userWeight) + (normalizedExternal * (1 - userWeight));
+    return Math.floor(combined);
   }
 
   /**

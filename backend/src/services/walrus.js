@@ -96,7 +96,49 @@ export class WalrusService {
       return { output: stdout, raw: true };
     } catch (error) {
       logger.error('Walrus command failed:', error);
-      throw new Error(`Walrus command failed: ${error.message}`);
+      // Include stderr in error message if available
+      const errorMsg = error.stderr ? `${error.message}\n${error.stderr}` : error.message;
+      throw new Error(`Walrus command failed: ${errorMsg}`);
+    }
+  }
+
+  /**
+   * Execute Walrus command in JSON mode
+   * 
+   * Reference: https://docs.wal.app/usage/json-api
+   * 
+   * This is an alternative way to execute commands using structured JSON
+   * Example: walrus json '{ "config": "...", "command": {...} }'
+   * 
+   * @param {Object} commandObj - Command object in JSON format
+   * @returns {Promise<Object>} Command result
+   */
+  async executeWalrusJSON(commandObj) {
+    try {
+      const jsonCommand = JSON.stringify({
+        config: this.configPath,
+        context: this.context,
+        ...commandObj,
+      });
+
+      // Use echo to pipe JSON to walrus json command
+      const fullCommand = `echo '${jsonCommand.replace(/'/g, "'\\''")}' | ${this.walrusPath} json`;
+      logger.debug(`Executing Walrus JSON command`);
+
+      const { stdout, stderr } = await execAsync(fullCommand, {
+        maxBuffer: 10 * 1024 * 1024,
+        timeout: 60000,
+        shell: true, // Need shell for pipe
+      });
+
+      if (stderr) {
+        logger.warn('Walrus JSON command stderr:', stderr);
+      }
+
+      return JSON.parse(stdout);
+    } catch (error) {
+      logger.error('Walrus JSON command failed:', error);
+      throw new Error(`Walrus JSON command failed: ${error.message}`);
     }
   }
 
@@ -125,15 +167,21 @@ export class WalrusService {
       tempFile = join(tmpdir(), `walrus-store-${Date.now()}-${Math.random().toString(36).substring(7)}.tmp`);
       await writeFile(tempFile, buffer);
 
-      // Build command: walrus store <file> [--deletable] [--epochs <n>]
+      // Build command: walrus store <file> --epochs <n> [--permanent|--deletable]
+      // Note: --epochs is mandatory. Since v1.33, blobs are deletable by default.
+      // Use --permanent for non-deletable blobs (contributions should be permanent)
       let command = `store ${tempFile}`;
       
-      if (options.deletable) {
-        command += ' --deletable';
-      }
+      // Epochs is mandatory - default to 365 if not specified
+      const epochs = options.epochs || 365;
+      command += ` --epochs ${epochs}`;
       
-      if (options.epochs) {
-        command += ` --epochs ${options.epochs}`;
+      // Since v1.33, blobs are deletable by default
+      // For contributions, we want permanent (non-deletable) storage
+      if (options.permanent || !options.deletable) {
+        command += ' --permanent';
+      } else if (options.deletable) {
+        command += ' --deletable';
       }
 
       // Execute command with JSON output
@@ -153,7 +201,8 @@ export class WalrusService {
         blobId,
         size: buffer.length,
         deletable: options.deletable || false,
-        epochs: options.epochs || null,
+        permanent: options.permanent || false,
+        epochs: options.epochs || 365,
       };
     } catch (error) {
       const duration = Date.now() - startTime;
@@ -194,8 +243,9 @@ export class WalrusService {
       // Create temp file for output
       outputFile = join(tmpdir(), `walrus-read-${Date.now()}-${Math.random().toString(36).substring(7)}.tmp`);
 
-      // Execute command: walrus read <blob-id> --output <file>
-      const command = `read ${blobId} --output ${outputFile}`;
+      // Execute command: walrus read <blob-id> --out <file>
+      // Note: Official docs use --out, not --output
+      const command = `read ${blobId} --out ${outputFile}`;
       await this.executeWalrusCommand(command);
 
       // Read the file content
@@ -242,8 +292,9 @@ export class WalrusService {
     try {
       logger.info(`Getting blob status: ${blobId}`);
 
-      // Execute command: walrus blob-status <blob-id>
-      const command = `blob-status ${blobId}`;
+      // Execute command: walrus blob-status --blob-id <blob-id>
+      // Note: Official docs use --blob-id flag
+      const command = `blob-status --blob-id ${blobId}`;
       const result = await this.executeWalrusCommand(command, { json: true });
 
       // Parse blob status
@@ -299,9 +350,10 @@ export class WalrusService {
       // Convert contribution to JSON
       const jsonData = JSON.stringify(contribution, null, 2);
       
-      // Store on Walrus (contributions should not be deletable)
+      // Store on Walrus (contributions should be permanent/non-deletable)
+      // Since v1.33, blobs are deletable by default, so we use --permanent flag
       const result = await this.storeBlob(jsonData, {
-        deletable: false, // Contributions should not be deletable
+        permanent: true, // Contributions should be permanent (non-deletable)
         epochs: 365, // Store for 1 year (adjust as needed)
       });
 
@@ -343,42 +395,67 @@ export class WalrusService {
    * Handles both JSON and text output formats
    */
   extractBlobId(result) {
-    // Try JSON format first
+    // Try JSON format first (from JSON mode or structured output)
     if (result.blob_id) return result.blob_id;
     if (result.blobId) return result.blobId;
     if (result.id) return result.id;
+    
+    // Check for newlyCreated response format (from store command)
+    if (result.newlyCreated?.blobObject?.blobId) {
+      return result.newlyCreated.blobObject.blobId;
+    }
+    if (result.newlyCreated?.blobObject?.id) {
+      return result.newlyCreated.blobObject.id;
+    }
 
     // Try text output format
     if (result.output) {
-      // Look for "Blob ID: 0x..." pattern
-      const match = result.output.match(/Blob ID:\s*(0x[a-fA-F0-9]+)/i);
-      if (match) return match[1];
+      // Look for "Blob ID: ..." pattern (can be base64 or hex)
+      const match = result.output.match(/Blob ID[:\s]+([^\s\n]+)/i);
+      if (match) return match[1].trim();
       
-      // Look for just "0x..." pattern
+      // Look for base64 blob ID pattern (Walrus uses base64-encoded IDs)
+      const base64Match = result.output.match(/([A-Za-z0-9_-]{43,})/);
+      if (base64Match) return base64Match[1];
+      
+      // Look for hex pattern (0x...)
       const hexMatch = result.output.match(/(0x[a-fA-F0-9]{64,})/);
       if (hexMatch) return hexMatch[1];
     }
     
-    throw new Error('Could not extract blob ID from result');
+    logger.error('Could not extract blob ID from result:', JSON.stringify(result, null, 2));
+    throw new Error('Could not extract blob ID from Walrus command result');
   }
 
   /**
    * Parse blob status from command output
    * 
    * Handles both JSON and text output formats
+   * Based on: https://docs.wal.app/usage/client-cli#blob-status
    */
   parseBlobStatus(result, blobId) {
     const status = {
       blobId,
       certified: false,
       deletable: false,
+      permanent: false,
       expiryEpoch: null,
+      endEpoch: null,
       eventId: null,
+      objectId: null,
     };
 
     // Try JSON format first
-    if (result.certified !== undefined) {
-      return { ...status, ...result };
+    if (result.certified !== undefined || result.certifiedEpoch !== undefined) {
+      return {
+        ...status,
+        ...result,
+        certified: result.certified || result.certifiedEpoch !== null,
+        deletable: result.deletable || false,
+        permanent: !result.deletable || false,
+        expiryEpoch: result.expiryEpoch || result.endEpoch,
+        endEpoch: result.endEpoch || result.expiryEpoch,
+      };
     }
 
     // Parse from text output
@@ -387,14 +464,22 @@ export class WalrusService {
       
       if (output.includes('certified')) status.certified = true;
       if (output.includes('deletable')) status.deletable = true;
+      if (output.includes('permanent')) status.permanent = true;
       
-      // Extract epoch
-      const epochMatch = result.output.match(/expiry[:\s]+(\d+)/i);
-      if (epochMatch) status.expiryEpoch = parseInt(epochMatch[1]);
+      // Extract epoch (can be expiryEpoch or endEpoch)
+      const epochMatch = result.output.match(/(?:expiry|end)[\s_]*epoch[:\s]+(\d+)/i);
+      if (epochMatch) {
+        status.expiryEpoch = parseInt(epochMatch[1]);
+        status.endEpoch = parseInt(epochMatch[1]);
+      }
       
-      // Extract event ID
-      const eventMatch = result.output.match(/event[:\s]+(0x[a-fA-F0-9]+)/i);
+      // Extract event ID (for certified blobs)
+      const eventMatch = result.output.match(/event[:\s]+(0x[a-fA-F0-9]+|[A-Za-z0-9_-]+)/i);
       if (eventMatch) status.eventId = eventMatch[1];
+      
+      // Extract object ID
+      const objectMatch = result.output.match(/object[:\s]+(0x[a-fA-F0-9]{64,})/i);
+      if (objectMatch) status.objectId = objectMatch[1];
     }
 
     return status;

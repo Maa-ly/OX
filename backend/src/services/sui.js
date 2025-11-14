@@ -19,10 +19,11 @@ export class SuiService {
   /**
    * Update engagement metrics on-chain
    * @param {string} ipTokenId - IP token ID
-   * @param {Object} metrics - Aggregated metrics
+   * @param {Object} metrics - Combined metrics (Walrus + Nautilus)
+   * @param {Array} nautilusMetrics - Array of signed Nautilus metrics (for on-chain verification)
    * @returns {Promise<Object>} Transaction result
    */
-  async updateEngagementMetrics(ipTokenId, metrics) {
+  async updateEngagementMetrics(ipTokenId, metrics, nautilusMetrics = []) {
     try {
       if (!this.packageId || !this.oracleObjectId || !this.adminCapId) {
         throw new Error('Oracle configuration incomplete. Set PACKAGE_ID, ORACLE_OBJECT_ID, and ADMIN_CAP_ID in .env');
@@ -32,9 +33,17 @@ export class SuiService {
         throw new Error('Admin keypair not configured');
       }
 
-      logger.info(`Updating on-chain metrics for IP token: ${ipTokenId}`);
+      logger.info(`Updating on-chain metrics for IP token: ${ipTokenId} (with ${nautilusMetrics.length} Nautilus sources)`);
 
       const tx = new Transaction();
+
+      // Use combined metrics for price calculation
+      // The smart contract will verify Nautilus signatures on-chain
+      const averageRating = metrics.combined_rating || metrics.user_average_rating || metrics.average_rating || 0;
+      const totalContributors = metrics.user_total_contributors || metrics.total_contributors || 0;
+      const totalEngagements = metrics.user_total_engagements || metrics.total_engagements || 0;
+      const predictionAccuracy = metrics.user_prediction_accuracy || metrics.prediction_accuracy || 0;
+      const growthRate = metrics.combined_growth_rate || metrics.user_growth_rate || metrics.growth_rate || 0;
 
       tx.moveCall({
         target: `${this.packageId}::oracle::update_engagement_metrics`,
@@ -42,13 +51,17 @@ export class SuiService {
           tx.object(this.oracleObjectId),
           tx.object(this.adminCapId),
           ipTokenId,
-          metrics.average_rating,
-          metrics.total_contributors,
-          metrics.total_engagements,
-          metrics.prediction_accuracy,
-          metrics.growth_rate,
+          averageRating,
+          totalContributors,
+          totalEngagements,
+          predictionAccuracy,
+          growthRate,
         ],
       });
+
+      // TODO: Add Nautilus signature verification in a separate transaction
+      // This would call a function like `verify_nautilus_metrics()` in the oracle module
+      // For now, we pass the combined metrics and the contract can verify later
 
       const result = await this.client.signAndExecuteTransaction({
         signer: this.adminKeypair,

@@ -14,6 +14,7 @@ import oracleRoutes from './routes/oracle.js';
 import metricsRoutes from './routes/metrics.js';
 import walrusRoutes from './routes/walrus.js';
 import contractRoutes from './routes/contract.js';
+import nautilusRoutes from './routes/nautilus.js';
 
 // Import services
 import { OracleScheduler } from './services/scheduler.js';
@@ -40,6 +41,7 @@ app.use('/api/oracle', oracleRoutes);
 app.use('/api/metrics', metricsRoutes);
 app.use('/api/walrus', walrusRoutes);
 app.use('/api/contract', contractRoutes);
+app.use('/api/nautilus', nautilusRoutes);
 
 // Root endpoint
 app.get('/', (req, res) => {
@@ -53,6 +55,7 @@ app.get('/', (req, res) => {
       metrics: '/api/metrics',
       walrus: '/api/walrus',
       contract: '/api/contract',
+      nautilus: '/api/nautilus',
     },
   });
 });
@@ -82,8 +85,10 @@ async function startServer() {
     logger.info('Metrics Collector initialized');
     
     // Set metrics collector in routes
-    const { setMetricsCollector } = await import('./routes/oracle.js');
-    setMetricsCollector(metricsCollector);
+    const { setMetricsCollector: setOracleMetricsCollector } = await import('./routes/oracle.js');
+    const { setMetricsCollector: setNautilusMetricsCollector } = await import('./routes/nautilus.js');
+    setOracleMetricsCollector(metricsCollector);
+    setNautilusMetricsCollector(metricsCollector);
     logger.info('Routes configured');
     
     try {

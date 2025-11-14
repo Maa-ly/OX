@@ -5,6 +5,7 @@ import { WalrusIndexerService } from '../services/walrus-indexer.js';
 import { VerificationService } from '../services/verification.js';
 import { AggregationService } from '../services/aggregation.js';
 import { SuiService } from '../services/sui.js';
+import { NautilusService } from '../services/nautilus.js';
 
 const router = express.Router();
 const walrusService = new WalrusService();
@@ -12,12 +13,14 @@ const indexerService = new WalrusIndexerService();
 const verificationService = new VerificationService();
 const aggregationService = new AggregationService();
 const suiService = new SuiService();
+const nautilusService = new NautilusService();
 
 // Metrics collector will be set by server.js
 let metricsCollector = null;
 export function setMetricsCollector(collector) {
   metricsCollector = collector;
   walrusService.setMetricsCollector(collector);
+  nautilusService.setMetricsCollector(collector);
 }
 
 // Get contributions for an IP token
@@ -124,12 +127,14 @@ router.post('/verify', async (req, res, next) => {
 });
 
 // Aggregate metrics for an IP token
+// Combines Walrus (user contributions) + Nautilus (external truth)
 router.get('/metrics/:ipTokenId', async (req, res, next) => {
   const startTime = Date.now();
   try {
     const { ipTokenId } = req.params;
+    const { includeExternal = 'true', name } = req.query; // Include Nautilus data by default
 
-    logger.info(`Aggregating metrics for IP token: ${ipTokenId}`);
+    logger.info(`Aggregating metrics for IP token: ${ipTokenId} (includeExternal: ${includeExternal})`);
 
     // 1. Query contributions from Walrus (via indexer)
     const contributions = await indexerService.queryContributionsByIP(ipTokenId);
@@ -142,8 +147,32 @@ router.get('/metrics/:ipTokenId', async (req, res, next) => {
       metricsCollector.counters.verification.failed += (contributions.length - verified.length);
     }
 
-    // 3. Aggregate metrics
-    const metrics = aggregationService.aggregateMetrics(verified);
+    // 3. Aggregate user metrics from Walrus
+    const walrusMetrics = aggregationService.aggregateMetrics(verified);
+
+    // 4. Fetch external metrics from Nautilus (if enabled)
+    let nautilusMetrics = [];
+    if (includeExternal === 'true') {
+      try {
+        // TODO: Get IP token name from contract or cache
+        // For now, we'll need to pass it as a query param or fetch from contract
+        if (name) {
+          nautilusMetrics = await nautilusService.fetchMultipleSources({
+            ipTokenId,
+            name,
+            sources: ['myanimelist', 'anilist'], // Can be configured
+          });
+        } else {
+          logger.warn('IP token name not provided, skipping Nautilus fetch');
+        }
+      } catch (error) {
+        logger.warn('Failed to fetch Nautilus metrics, using Walrus only:', error.message);
+        // Continue with Walrus-only metrics if Nautilus fails
+      }
+    }
+
+    // 5. Combine Walrus + Nautilus metrics
+    const combinedMetrics = aggregationService.combineMetrics(walrusMetrics, nautilusMetrics);
     
     const duration = Date.now() - startTime;
     if (metricsCollector) {
@@ -155,11 +184,17 @@ router.get('/metrics/:ipTokenId', async (req, res, next) => {
     res.json({
       success: true,
       ipTokenId,
-      metrics,
-      stats: {
-        totalContributions: contributions.length,
-        verifiedContributions: verified.length,
-        invalidContributions: contributions.length - verified.length,
+      metrics: combinedMetrics,
+      sources: {
+        walrus: {
+          totalContributions: contributions.length,
+          verifiedContributions: verified.length,
+          invalidContributions: contributions.length - verified.length,
+        },
+        nautilus: {
+          sourcesQueried: nautilusMetrics.length,
+          sources: nautilusMetrics.map((m) => m.source),
+        },
       },
     });
   } catch (error) {
@@ -168,12 +203,14 @@ router.get('/metrics/:ipTokenId', async (req, res, next) => {
 });
 
 // Update metrics on-chain
+// Combines Walrus + Nautilus data before updating
 router.post('/update/:ipTokenId', async (req, res, next) => {
+  const startTime = Date.now();
   try {
     const { ipTokenId } = req.params;
-    const { force } = req.query;
+    const { force, includeExternal = 'true', name } = req.query;
 
-    logger.info(`Updating on-chain metrics for IP token: ${ipTokenId}`);
+    logger.info(`Updating on-chain metrics for IP token: ${ipTokenId} (includeExternal: ${includeExternal})`);
 
     // 1. Query contributions from Walrus (via indexer)
     const contributions = await indexerService.queryContributionsByIP(ipTokenId);
@@ -181,12 +218,30 @@ router.post('/update/:ipTokenId', async (req, res, next) => {
     // 2. Verify signatures
     const verified = await verificationService.verifyContributions(contributions);
 
-    // 3. Aggregate metrics
-    const metrics = aggregationService.aggregateMetrics(verified);
+    // 3. Aggregate user metrics from Walrus
+    const walrusMetrics = aggregationService.aggregateMetrics(verified);
 
-    // 4. Update on-chain
+    // 4. Fetch external metrics from Nautilus (if enabled)
+    let nautilusMetrics = [];
+    if (includeExternal === 'true' && name) {
+      try {
+        nautilusMetrics = await nautilusService.fetchMultipleSources({
+          ipTokenId,
+          name,
+          sources: ['myanimelist', 'anilist'],
+        });
+      } catch (error) {
+        logger.warn('Failed to fetch Nautilus metrics, using Walrus only:', error.message);
+      }
+    }
+
+    // 5. Combine Walrus + Nautilus metrics
+    const combinedMetrics = aggregationService.combineMetrics(walrusMetrics, nautilusMetrics);
+
+    // 6. Update on-chain with combined metrics
+    // Note: Smart contract will verify Nautilus signatures on-chain
     const updateStartTime = Date.now();
-    const result = await suiService.updateEngagementMetrics(ipTokenId, metrics);
+    const result = await suiService.updateEngagementMetrics(ipTokenId, combinedMetrics, nautilusMetrics);
     const updateDuration = Date.now() - updateStartTime;
     
     if (metricsCollector) {
@@ -197,8 +252,16 @@ router.post('/update/:ipTokenId', async (req, res, next) => {
     res.json({
       success: true,
       ipTokenId,
-      metrics,
+      metrics: combinedMetrics,
       transaction: result,
+      sources: {
+        walrus: {
+          contributions: verified.length,
+        },
+        nautilus: {
+          sources: nautilusMetrics.length,
+        },
+      },
     });
   } catch (error) {
     const duration = Date.now() - startTime;

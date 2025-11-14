@@ -21,6 +21,15 @@ export const config = {
     context: process.env.WALRUS_CONTEXT || 'testnet',
   },
 
+  // Nautilus Configuration
+  nautilus: {
+    enclaveUrl: process.env.NAUTILUS_ENCLAVE_URL || 'http://localhost:3000',
+    enclavePublicKey: process.env.NAUTILUS_ENCLAVE_PUBLIC_KEY || null,
+    timeout: parseInt(process.env.NAUTILUS_TIMEOUT || '30000', 10),
+    enabled: process.env.NAUTILUS_ENABLED !== 'false', // Enabled by default
+    sources: (process.env.NAUTILUS_SOURCES || 'myanimelist,anilist').split(','),
+  },
+
   // Oracle Configuration (NEW DEPLOYMENT)
   oracle: {
     objectId: process.env.ORACLE_OBJECT_ID || '0xae22366356c30d091040f522a1fb472dea2fb12009f3ca0ff062c916b939ae85',

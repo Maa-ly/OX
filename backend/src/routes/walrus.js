@@ -21,7 +21,8 @@ router.post('/store', async (req, res, next) => {
 
     const result = await walrusService.storeBlob(data, {
       deletable: deletable || false,
-      epochs: epochs || null,
+      permanent: !deletable, // If not deletable, make it permanent
+      epochs: epochs || 365, // Default to 365 epochs (1 year)
     });
 
     res.json({

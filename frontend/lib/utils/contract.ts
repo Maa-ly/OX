@@ -75,14 +75,24 @@ export async function createIPToken(
     },
   });
 
-  // Extract created token ID from object changes
-  const createdToken = result.objectChanges?.find(
-    (change: any) => change.type === 'created' && change.objectType?.includes('IPToken')
-  );
-
+  // Extract created token ID from object changes or return value
+  // The function now returns ID directly, so check return values first
+  let tokenId: string | undefined;
+  
+  if (result.events) {
+    // Try to find token ID from events or object changes
+    const createdToken = result.objectChanges?.find(
+      (change: any) => change.type === 'created' && change.objectType?.includes('IPToken')
+    );
+    tokenId = createdToken?.objectId;
+  }
+  
+  // If not found in object changes, the function returns ID directly
+  // We'll need to parse it from the return value if available
+  // For now, return what we can find
   return {
     digest: result.digest,
-    tokenId: createdToken?.objectId,
+    tokenId,
   };
 }
 

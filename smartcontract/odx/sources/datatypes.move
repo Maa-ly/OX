@@ -4,11 +4,12 @@
 /// This module defines all shared data structures used across the ODX platform
 /// including IP tokens, engagement data, pricing, and reward structures.
 
+#[allow(duplicate_alias)]
 module odx::datatypes;
 
 use sui::object::{Self, UID, ID};
 use sui::tx_context::TxContext;
-use std::vector;
+use sui::transfer;
 
 /// IP Token Metadata
 /// Stores information about an anime/manga/manhwa IP token
@@ -325,6 +326,8 @@ public fun get_engagement_user_address(engagement: &EngagementData): address { e
 public fun get_engagement_rating(engagement: &EngagementData): u8 { engagement.rating }
 public fun get_engagement_timestamp(engagement: &EngagementData): u64 { engagement.timestamp }
 public fun get_engagement_ip_token_id(engagement: &EngagementData): ID { engagement.ip_token_id }
+public fun get_engagement_prediction_hash(engagement: &EngagementData): vector<u8> { engagement.prediction_hash }
+public fun get_engagement_type(engagement: &EngagementData): u8 { engagement.engagement_type }
 
 // ContributorRecord getter and setter functions
 public fun get_contributor_engagement_count(contributor: &ContributorRecord): u64 { contributor.engagement_count }
@@ -410,6 +413,16 @@ public fun get_token_admin(token: &IPToken): address { token.admin }
 // IPToken setter functions
 public fun set_token_reserve_pool(token: &mut IPToken, amount: u64) { token.reserve_pool = amount }
 public fun set_token_circulating_supply(token: &mut IPToken, amount: u64) { token.circulating_supply = amount }
+
+// IPToken transfer function (required because transfer::transfer is module-private)
+public fun transfer_token(token: IPToken, recipient: address) {
+    transfer::transfer(token, recipient)
+}
+
+// MarketOrder transfer function (required because transfer::transfer is module-private)
+public fun transfer_order(order: MarketOrder, recipient: address) {
+    transfer::transfer(order, recipient)
+}
 
 // RewardDistribution constructor
 public fun create_reward_distribution(
