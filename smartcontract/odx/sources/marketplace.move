@@ -6,13 +6,11 @@
 
 module odx::marketplace;
 
-use sui::object::{Self, UID, ID};
-use sui::tx_context::{Self, TxContext};
-use sui::transfer;
 use sui::coin::{Self, Coin};
 use sui::sui::SUI;
-use std::vector;
-use odx::datatypes::{Self, MarketOrder, IPToken};
+use sui::table::{Self, Table};
+use odx::datatypes::MarketOrder;
+use odx::oracle;
 
 /// Marketplace
 /// Main marketplace object that tracks all orders
@@ -24,6 +22,10 @@ public struct Marketplace has key {
     sell_orders: vector<ID>,
     /// Trading fee percentage (scaled by 100, e.g., 100 = 1%)
     trading_fee_bps: u64, // basis points (1/100 of 1%)
+    /// Map of ip_token_id -> highest bid price
+    highest_bids: Table<ID, u64>,
+    /// Map of ip_token_id -> lowest ask price
+    lowest_asks: Table<ID, u64>,
 }
 
 /// Order Execution Result
@@ -38,9 +40,8 @@ public struct OrderExecutionResult has copy, drop {
 const E_INVALID_ORDER_TYPE: u64 = 0;
 const E_INVALID_PRICE: u64 = 1;
 const E_INVALID_QUANTITY: u64 = 2;
-const E_ORDER_NOT_FOUND: u64 = 3;
-const E_INSUFFICIENT_BALANCE: u64 = 4;
-const E_ORDER_ALREADY_FILLED: u64 = 5;
+const E_UNAUTHORIZED: u64 = 3;
+const E_INVALID_FEE: u64 = 4;
 const E_ORDER_NOT_ACTIVE: u64 = 6;
 const E_INSUFFICIENT_PAYMENT: u64 = 7;
 
@@ -49,12 +50,14 @@ const E_INSUFFICIENT_PAYMENT: u64 = 7;
 fun init(ctx: &mut TxContext) {
     let marketplace = Marketplace {
         id: object::new(ctx),
-        buy_orders: vector::empty(),
-        sell_orders: vector::empty(),
+        buy_orders: std::vector::empty(),
+        sell_orders: std::vector::empty(),
         trading_fee_bps: 100, // 1% default fee
+        highest_bids: table::new(ctx),
+        lowest_asks: table::new(ctx),
     };
     
-    transfer::share_object(marketplace);
+    sui::transfer::share_object(marketplace);
 }
 
 /// Create a buy order
@@ -71,6 +74,7 @@ fun init(ctx: &mut TxContext) {
 /// # Returns:
 /// - `MarketOrder`: The created buy order
 /// - `Coin<SUI>`: Remaining payment (if any)
+#[allow(lint(self_transfer))]
 public fun create_buy_order(
     marketplace: &mut Marketplace,
     ip_token_id: ID,
@@ -102,13 +106,24 @@ public fun create_buy_order(
     
     // Add to buy orders
     let order_id = object::id(&order);
-    vector::push_back(&mut marketplace.buy_orders, order_id);
+    std::vector::push_back(&mut marketplace.buy_orders, order_id);
+    
+    // Update highest bid for this IP token
+    if (table::contains(&marketplace.highest_bids, ip_token_id)) {
+        let current_bid = *table::borrow(&marketplace.highest_bids, ip_token_id);
+        if (price > current_bid) {
+            let bid_ref = table::borrow_mut(&mut marketplace.highest_bids, ip_token_id);
+            *bid_ref = price;
+        };
+    } else {
+        table::add(&mut marketplace.highest_bids, ip_token_id, price);
+    };
     
     // Extract the required payment amount and return the remainder
-    let required_coin = coin::split(&mut payment, total_required, ctx);
+    let _required_coin = coin::split(&mut payment, total_required, ctx);
     // Store the required payment (would be held by marketplace in production)
     // For now, we transfer it back to sender as placeholder
-    transfer::public_transfer(required_coin, tx_context::sender(ctx));
+    transfer::public_transfer(_required_coin, tx_context::sender(ctx));
     // Return the order and remaining payment
     (order, payment)
 }
@@ -148,16 +163,29 @@ public fun create_sell_order(
     
     // Add to sell orders
     let order_id = object::id(&order);
-    vector::push_back(&mut marketplace.sell_orders, order_id);
+    std::vector::push_back(&mut marketplace.sell_orders, order_id);
+    
+    // Update lowest ask for this IP token
+    if (table::contains(&marketplace.lowest_asks, ip_token_id)) {
+        let current_ask = *table::borrow(&marketplace.lowest_asks, ip_token_id);
+        if (price < current_ask || current_ask == 0) {
+            let ask_ref = table::borrow_mut(&mut marketplace.lowest_asks, ip_token_id);
+            *ask_ref = price;
+        };
+    } else {
+        table::add(&mut marketplace.lowest_asks, ip_token_id, price);
+    };
     
     order
 }
 
 /// Execute buy order (match with sell orders)
 /// Tries to fill a buy order by matching with available sell orders
+/// Updates oracle with trading metrics after execution
 /// 
 /// # Arguments:
 /// - `marketplace`: The marketplace object
+/// - `oracle`: Price oracle to update trading metrics
 /// - `buy_order`: The buy order to execute
 /// - `ctx`: Transaction context
 /// 
@@ -165,18 +193,34 @@ public fun create_sell_order(
 /// - `OrderExecutionResult`: Execution details
 public fun execute_buy_order(
     marketplace: &mut Marketplace,
+    oracle: &mut oracle::PriceOracle,
     buy_order: &mut MarketOrder,
     ctx: &mut TxContext,
 ): OrderExecutionResult {
     assert!(odx::datatypes::get_order_status(buy_order) == odx::datatypes::order_status_active(), E_ORDER_NOT_ACTIVE);
     assert!(odx::datatypes::get_order_type(buy_order) == odx::datatypes::order_type_buy(), E_INVALID_ORDER_TYPE);
     
-    let mut filled = 0;
-    let mut total_paid = 0;
+    let ip_token_id = odx::datatypes::get_order_ip_token_id(buy_order);
+    let buy_price = odx::datatypes::get_order_price(buy_order);
+    let filled = 0;
+    let total_paid = 0;
+    let mut last_execution_price = 0;
     let remaining_quantity = odx::datatypes::get_order_quantity(buy_order) - odx::datatypes::get_order_filled_quantity(buy_order);
     
-    // Try to match with sell orders (simplified - in production, would iterate through sorted orders)
-    // For now, this is a placeholder that would need actual order matching logic
+    // Try to match with sell orders
+    // Note: In production, this would iterate through sell orders and match them
+    // For now, this is a placeholder - use match_orders() function for actual matching
+    // The execute_buy_order() function is kept for backward compatibility
+    // but actual matching should use match_orders() with both order objects
+    
+    // For now, if no matches found, use buy price as execution price
+    if (filled == 0 && remaining_quantity > 0) {
+        // No matches - order remains on book
+        last_execution_price = buy_price;
+    } else if (filled > 0) {
+        // Calculate average execution price
+        last_execution_price = total_paid / filled;
+    };
     
     let fee = (total_paid * marketplace.trading_fee_bps) / 10000;
     
@@ -186,8 +230,34 @@ public fun execute_buy_order(
     if (filled >= remaining_quantity) {
         odx::datatypes::set_order_status(buy_order, odx::datatypes::order_status_filled());
         odx::datatypes::set_order_filled_quantity(buy_order, current_quantity);
-    } else {
+    } else if (filled > 0) {
+        odx::datatypes::set_order_status(buy_order, odx::datatypes::order_status_partially_filled());
         odx::datatypes::set_order_filled_quantity(buy_order, current_filled + filled);
+    };
+    
+    // Update oracle with trading metrics
+    let highest_bid = if (table::contains(&marketplace.highest_bids, ip_token_id)) {
+        *table::borrow(&marketplace.highest_bids, ip_token_id)
+    } else {
+        0
+    };
+    let lowest_ask = if (table::contains(&marketplace.lowest_asks, ip_token_id)) {
+        *table::borrow(&marketplace.lowest_asks, ip_token_id)
+    } else {
+        0
+    };
+    
+    if (filled > 0 && last_execution_price > 0) {
+        oracle::update_trading_metrics(
+            oracle,
+            ip_token_id,
+            highest_bid,
+            lowest_ask,
+            last_execution_price,
+            total_paid, // buy_volume
+            0, // sell_volume (handled in sell order execution)
+            ctx,
+        );
     };
     
     OrderExecutionResult {
@@ -199,19 +269,46 @@ public fun execute_buy_order(
 
 /// Execute sell order (match with buy orders)
 /// Tries to fill a sell order by matching with available buy orders
+/// Updates oracle with trading metrics after execution
+/// 
+/// # Arguments:
+/// - `marketplace`: The marketplace object
+/// - `oracle`: Price oracle to update trading metrics
+/// - `sell_order`: The sell order to execute
+/// - `ctx`: Transaction context
+/// 
+/// # Returns:
+/// - `OrderExecutionResult`: Execution details
 public fun execute_sell_order(
     marketplace: &mut Marketplace,
+    oracle: &mut oracle::PriceOracle,
     sell_order: &mut MarketOrder,
     ctx: &mut TxContext,
 ): OrderExecutionResult {
     assert!(odx::datatypes::get_order_status(sell_order) == odx::datatypes::order_status_active(), E_ORDER_NOT_ACTIVE);
     assert!(odx::datatypes::get_order_type(sell_order) == odx::datatypes::order_type_sell(), E_INVALID_ORDER_TYPE);
     
-    let mut filled = 0;
-    let mut total_received = 0;
+    let ip_token_id = odx::datatypes::get_order_ip_token_id(sell_order);
+    let sell_price = odx::datatypes::get_order_price(sell_order);
+    let filled = 0;
+    let total_received = 0;
+    let mut last_execution_price = 0;
     let remaining_quantity = odx::datatypes::get_order_quantity(sell_order) - odx::datatypes::get_order_filled_quantity(sell_order);
     
-    // Try to match with buy orders (simplified - in production, would iterate through sorted orders)
+    // Try to match with buy orders
+    // Note: In production, this would iterate through buy orders and match them
+    // For now, this is a placeholder - use match_orders() function for actual matching
+    // The execute_sell_order() function is kept for backward compatibility
+    // but actual matching should use match_orders() with both order objects
+    
+    // For now, if no matches found, use sell price as execution price
+    if (filled == 0 && remaining_quantity > 0) {
+        // No matches - order remains on book
+        last_execution_price = sell_price;
+    } else if (filled > 0) {
+        // Calculate average execution price
+        last_execution_price = total_received / filled;
+    };
     
     let fee = (total_received * marketplace.trading_fee_bps) / 10000;
     
@@ -221,8 +318,34 @@ public fun execute_sell_order(
     if (filled >= remaining_quantity) {
         odx::datatypes::set_order_status(sell_order, odx::datatypes::order_status_filled());
         odx::datatypes::set_order_filled_quantity(sell_order, current_quantity);
-    } else {
+    } else if (filled > 0) {
+        odx::datatypes::set_order_status(sell_order, odx::datatypes::order_status_partially_filled());
         odx::datatypes::set_order_filled_quantity(sell_order, current_filled + filled);
+    };
+    
+    // Update oracle with trading metrics
+    let highest_bid = if (table::contains(&marketplace.highest_bids, ip_token_id)) {
+        *table::borrow(&marketplace.highest_bids, ip_token_id)
+    } else {
+        0
+    };
+    let lowest_ask = if (table::contains(&marketplace.lowest_asks, ip_token_id)) {
+        *table::borrow(&marketplace.lowest_asks, ip_token_id)
+    } else {
+        0
+    };
+    
+    if (filled > 0 && last_execution_price > 0) {
+        oracle::update_trading_metrics(
+            oracle,
+            ip_token_id,
+            highest_bid,
+            lowest_ask,
+            last_execution_price,
+            0, // buy_volume (handled in buy order execution)
+            total_received, // sell_volume
+            ctx,
+        );
     };
     
     OrderExecutionResult {
@@ -235,11 +358,11 @@ public fun execute_sell_order(
 /// Cancel an order
 /// Only the order creator can cancel their own order
 public fun cancel_order(
-    marketplace: &mut Marketplace,
+    _marketplace: &mut Marketplace,
     order: &mut MarketOrder,
     sender: address,
 ) {
-    assert!(odx::datatypes::get_order_creator(order) == sender, 1); // E_UNAUTHORIZED
+    assert!(odx::datatypes::get_order_creator(order) == sender, E_UNAUTHORIZED);
     assert!(odx::datatypes::get_order_status(order) == odx::datatypes::order_status_active(), E_ORDER_NOT_ACTIVE);
     
     odx::datatypes::set_order_status(order, odx::datatypes::order_status_cancelled());
@@ -257,7 +380,7 @@ public fun update_trading_fee(
     marketplace: &mut Marketplace,
     new_fee_bps: u64,
 ) {
-    assert!(new_fee_bps <= 1000, 2); // Max 10% fee
+    assert!(new_fee_bps <= 1000, E_INVALID_FEE); // Max 10% fee
     marketplace.trading_fee_bps = new_fee_bps;
 }
 
@@ -272,5 +395,117 @@ public fun get_order_info(order: &MarketOrder): (ID, address, u8, u64, u64, u64,
         odx::datatypes::get_order_filled_quantity(order),
         odx::datatypes::get_order_status(order),
     )
+}
+
+/// Get highest bid for an IP token
+public fun get_highest_bid(marketplace: &Marketplace, ip_token_id: ID): u64 {
+    if (table::contains(&marketplace.highest_bids, ip_token_id)) {
+        *table::borrow(&marketplace.highest_bids, ip_token_id)
+    } else {
+        0
+    }
+}
+
+/// Get lowest ask for an IP token
+public fun get_lowest_ask(marketplace: &Marketplace, ip_token_id: ID): u64 {
+    if (table::contains(&marketplace.lowest_asks, ip_token_id)) {
+        *table::borrow(&marketplace.lowest_asks, ip_token_id)
+    } else {
+        0
+    }
+}
+
+/// Match a buy order with a sell order
+/// Executes a trade between a buy and sell order if prices are compatible
+/// Updates oracle with trading metrics after execution
+/// 
+/// # Arguments:
+/// - `marketplace`: The marketplace object
+/// - `oracle`: Price oracle to update trading metrics
+/// - `buy_order`: The buy order to match
+/// - `sell_order`: The sell order to match
+/// - `ctx`: Transaction context
+/// 
+/// # Returns:
+/// - `OrderExecutionResult`: Execution details for the buy order side
+public fun match_orders(
+    marketplace: &mut Marketplace,
+    oracle: &mut oracle::PriceOracle,
+    buy_order: &mut MarketOrder,
+    sell_order: &mut MarketOrder,
+    ctx: &mut TxContext,
+): OrderExecutionResult {
+    assert!(odx::datatypes::get_order_status(buy_order) == odx::datatypes::order_status_active(), E_ORDER_NOT_ACTIVE);
+    assert!(odx::datatypes::get_order_status(sell_order) == odx::datatypes::order_status_active(), E_ORDER_NOT_ACTIVE);
+    assert!(odx::datatypes::get_order_type(buy_order) == odx::datatypes::order_type_buy(), E_INVALID_ORDER_TYPE);
+    assert!(odx::datatypes::get_order_type(sell_order) == odx::datatypes::order_type_sell(), E_INVALID_ORDER_TYPE);
+    
+    let buy_price = odx::datatypes::get_order_price(buy_order);
+    let sell_price = odx::datatypes::get_order_price(sell_order);
+    
+    // Check if orders can match (buy price >= sell price)
+    assert!(buy_price >= sell_price, E_INVALID_PRICE);
+    
+    let ip_token_id = odx::datatypes::get_order_ip_token_id(buy_order);
+    assert!(ip_token_id == odx::datatypes::get_order_ip_token_id(sell_order), E_INVALID_ORDER_TYPE);
+    
+    // Calculate how much can be filled
+    let buy_remaining = odx::datatypes::get_order_quantity(buy_order) - odx::datatypes::get_order_filled_quantity(buy_order);
+    let sell_remaining = odx::datatypes::get_order_quantity(sell_order) - odx::datatypes::get_order_filled_quantity(sell_order);
+    let fill_quantity = if (buy_remaining < sell_remaining) buy_remaining else sell_remaining;
+    
+    // Execution price is the sell price (price-time priority: seller's price wins)
+    let execution_price = sell_price;
+    let total_value = execution_price * fill_quantity;
+    let fee = (total_value * marketplace.trading_fee_bps) / 10000;
+    
+    // Update buy order
+    let buy_filled = odx::datatypes::get_order_filled_quantity(buy_order);
+    let buy_total = odx::datatypes::get_order_quantity(buy_order);
+    odx::datatypes::set_order_filled_quantity(buy_order, buy_filled + fill_quantity);
+    if (buy_filled + fill_quantity >= buy_total) {
+        odx::datatypes::set_order_status(buy_order, odx::datatypes::order_status_filled());
+    } else {
+        odx::datatypes::set_order_status(buy_order, odx::datatypes::order_status_partially_filled());
+    };
+    
+    // Update sell order
+    let sell_filled = odx::datatypes::get_order_filled_quantity(sell_order);
+    let sell_total = odx::datatypes::get_order_quantity(sell_order);
+    odx::datatypes::set_order_filled_quantity(sell_order, sell_filled + fill_quantity);
+    if (sell_filled + fill_quantity >= sell_total) {
+        odx::datatypes::set_order_status(sell_order, odx::datatypes::order_status_filled());
+    } else {
+        odx::datatypes::set_order_status(sell_order, odx::datatypes::order_status_partially_filled());
+    };
+    
+    // Update oracle with trading metrics
+    let highest_bid = if (table::contains(&marketplace.highest_bids, ip_token_id)) {
+        *table::borrow(&marketplace.highest_bids, ip_token_id)
+    } else {
+        0
+    };
+    let lowest_ask = if (table::contains(&marketplace.lowest_asks, ip_token_id)) {
+        *table::borrow(&marketplace.lowest_asks, ip_token_id)
+    } else {
+        0
+    };
+    
+    oracle::update_trading_metrics(
+        oracle,
+        ip_token_id,
+        highest_bid,
+        lowest_ask,
+        execution_price,
+        total_value, // buy_volume
+        total_value, // sell_volume
+        ctx,
+    );
+    
+    OrderExecutionResult {
+        filled_quantity: fill_quantity,
+        total_price: total_value,
+        fee,
+    }
 }
 

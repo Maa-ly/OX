@@ -6,11 +6,7 @@
 
 module odx::token;
 
-use sui::object::{Self, UID, ID};
-use sui::tx_context::{Self, TxContext};
-use sui::transfer;
-use std::vector;
-use odx::datatypes::{Self, IPToken, IPTokenMetadata};
+use odx::datatypes::{IPToken, IPTokenMetadata};
 
 /// Admin Capability
 /// Grants admin privileges to create and manage IP tokens
@@ -29,12 +25,7 @@ public struct TokenRegistry has key {
 }
 
 /// Error codes
-const E_NOT_ADMIN: u64 = 0;
-const E_TOKEN_EXISTS: u64 = 1;
-const E_INVALID_SUPPLY: u64 = 2;
 const E_INVALID_RESERVE: u64 = 3;
-const E_INSUFFICIENT_RESERVE: u64 = 4;
-const E_TOKEN_NOT_FOUND: u64 = 5;
 
 /// Initialize the token module
 /// Creates the admin capability and token registry
@@ -46,13 +37,13 @@ fun init(ctx: &mut TxContext) {
     
     let registry = TokenRegistry {
         id: object::new(ctx),
-        tokens: vector::empty(),
+        tokens: std::vector::empty(),
         admin: tx_context::sender(ctx),
     };
     
     // Transfer admin cap to sender (deployer)
-    transfer::share_object(admin_cap);
-    transfer::share_object(registry);
+    sui::transfer::share_object(admin_cap);
+    sui::transfer::share_object(registry);
 }
 
 /// Create a new IP token
@@ -102,7 +93,7 @@ public fun create_ip_token(
     
     // Add to registry
     let token_id = object::id(&token);
-    vector::push_back(&mut registry.tokens, token_id);
+    std::vector::push_back(&mut registry.tokens, token_id);
     
     token
 }
@@ -201,6 +192,6 @@ public fun get_all_tokens(registry: &TokenRegistry): vector<ID> {
 
 /// Get token count in registry
 public fun get_token_count(registry: &TokenRegistry): u64 {
-    vector::length(&registry.tokens)
+    std::vector::length(&registry.tokens)
 }
 

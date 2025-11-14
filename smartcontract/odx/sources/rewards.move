@@ -9,13 +9,8 @@
 
 module odx::rewards;
 
-use sui::object::{Self, UID, ID};
-use sui::tx_context::{Self, TxContext};
-use sui::transfer;
 use sui::table::{Self, Table};
-use std::vector;
-use std::option::{Self, Option};
-use odx::datatypes::{Self, ContributorRecord, RewardDistribution, EngagementData, IPToken};
+use odx::datatypes::{ContributorRecord, RewardDistribution, EngagementData, IPToken};
 use odx::token;
 
 /// Contributor Key
@@ -54,10 +49,6 @@ public struct RewardConfig has key {
 }
 
 /// Error codes
-const E_CONTRIBUTOR_NOT_FOUND: u64 = 0;
-const E_INVALID_ENGAGEMENT: u64 = 1;
-const E_INSUFFICIENT_RESERVE: u64 = 2;
-const E_ALREADY_REWARDED: u64 = 3;
 
 /// Initialize rewards system
 fun init(ctx: &mut TxContext) {
@@ -65,7 +56,7 @@ fun init(ctx: &mut TxContext) {
         id: object::new(ctx),
         contributors: table::new(ctx),
         contributor_counts: table::new(ctx),
-        reward_history: vector::empty(),
+        reward_history: std::vector::empty(),
     };
     
     let config = RewardConfig {
@@ -77,8 +68,8 @@ fun init(ctx: &mut TxContext) {
         viral_multiplier: 300, // 3x bonus for viral content
     };
     
-    transfer::share_object(registry);
-    transfer::share_object(config);
+    sui::transfer::share_object(registry);
+    sui::transfer::share_object(config);
 }
 
 /// Register engagement
@@ -94,7 +85,7 @@ public fun register_engagement(
     registry: &mut RewardsRegistry,
     engagement: EngagementData,
     ip_token: &IPToken,
-    ctx: &mut TxContext,
+    _ctx: &mut TxContext,
 ) {
     let ip_token_id = object::id(ip_token);
     let user_address = odx::datatypes::get_engagement_user_address(&engagement);
@@ -256,7 +247,7 @@ public fun distribute_reward(
             reason,
             tx_context::epoch_timestamp_ms(ctx),
         );
-        vector::push_back(&mut registry.reward_history, distribution);
+        std::vector::push_back(&mut registry.reward_history, distribution);
     };
     
     released
@@ -293,9 +284,9 @@ public fun get_contributor(
     };
     
     if (table::contains(&registry.contributors, key)) {
-        option::some(*table::borrow(&registry.contributors, key))
+        std::option::some(*table::borrow(&registry.contributors, key))
     } else {
-        option::none()
+        std::option::none()
     }
 }
 
@@ -313,6 +304,6 @@ public fun get_contributor_count(
 
 /// Get reward history length
 public fun get_reward_history_length(registry: &RewardsRegistry): u64 {
-    vector::length(&registry.reward_history)
+    std::vector::length(&registry.reward_history)
 }
 
