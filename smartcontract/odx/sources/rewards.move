@@ -10,12 +10,13 @@
 #[allow(duplicate_alias)]
 module odx::rewards;
 
-use sui::object::{UID, ID};
-use sui::tx_context::TxContext;
+use sui::object::{Self, UID, ID};
+use sui::tx_context::{Self, TxContext};
+use sui::transfer;
 use sui::table::{Self, Table};
 use std::vector;
-use std::option::Option;
-use odx::datatypes::{ContributorRecord, RewardDistribution, EngagementData, IPToken};
+use std::option::{Self, Option};
+use odx::datatypes::{Self, ContributorRecord, RewardDistribution, EngagementData, IPToken};
 use odx::token;
 
 /// Contributor Key
@@ -59,40 +60,13 @@ const E_INVALID_ENGAGEMENT: u64 = 1;
 const E_INSUFFICIENT_RESERVE: u64 = 2;
 const E_ALREADY_REWARDED: u64 = 3;
 
-// Helper to check contributor exists (uses E_CONTRIBUTOR_NOT_FOUND)
-fun check_contributor_exists(registry: &RewardsRegistry, key: &ContributorKey) {
-    assert!(table::contains(&registry.contributors, *key), E_CONTRIBUTOR_NOT_FOUND);
-}
-
-// Helper to validate engagement (uses E_INVALID_ENGAGEMENT)
-fun validate_engagement(engagement: &EngagementData) {
-    let rating = odx::datatypes::get_engagement_rating(engagement);
-    assert!(rating <= 10, E_INVALID_ENGAGEMENT); // Max rating is 10
-    
-    // Validate engagement type is valid (uses E_INVALID_ENGAGEMENT)
-    let engagement_type = odx::datatypes::get_engagement_type(engagement);
-    assert!(
-        engagement_type == odx::datatypes::engagement_type_rating() ||
-        engagement_type == odx::datatypes::engagement_type_prediction() ||
-        engagement_type == odx::datatypes::engagement_type_vote() ||
-        engagement_type == odx::datatypes::engagement_type_review(),
-        E_INVALID_ENGAGEMENT
-    );
-    
-    // For prediction type engagements, prediction_hash should not be empty (uses E_INVALID_ENGAGEMENT)
-    let prediction_hash = odx::datatypes::get_engagement_prediction_hash(engagement);
-    if (engagement_type == odx::datatypes::engagement_type_prediction()) {
-        assert!(std::vector::length(&prediction_hash) > 0, E_INVALID_ENGAGEMENT);
-    };
-}
-
 /// Initialize rewards system
 fun init(ctx: &mut TxContext) {
     let registry = RewardsRegistry {
         id: object::new(ctx),
         contributors: table::new(ctx),
         contributor_counts: table::new(ctx),
-        reward_history: vector::empty(),
+        reward_history: std::vector::empty(),
     };
     
     let config = RewardConfig {
@@ -104,8 +78,8 @@ fun init(ctx: &mut TxContext) {
         viral_multiplier: 300, // 3x bonus for viral content
     };
     
-    transfer::share_object(registry);
-    transfer::share_object(config);
+    sui::transfer::share_object(registry);
+    sui::transfer::share_object(config);
 }
 
 /// Register engagement
@@ -124,7 +98,25 @@ public fun register_engagement(
     _ctx: &mut TxContext,
 ) {
     // Validate engagement (uses E_INVALID_ENGAGEMENT)
-    validate_engagement(&engagement);
+    // Helper to validate engagement (uses E_INVALID_ENGAGEMENT)
+    let rating = odx::datatypes::get_engagement_rating(&engagement);
+    assert!(rating <= 10, E_INVALID_ENGAGEMENT); // Max rating is 10
+    
+    // Validate engagement type is valid (uses E_INVALID_ENGAGEMENT)
+    let engagement_type = odx::datatypes::get_engagement_type(&engagement);
+    assert!(
+        engagement_type == odx::datatypes::engagement_type_rating() ||
+        engagement_type == odx::datatypes::engagement_type_prediction() ||
+        engagement_type == odx::datatypes::engagement_type_vote() ||
+        engagement_type == odx::datatypes::engagement_type_review(),
+        E_INVALID_ENGAGEMENT
+    );
+    
+    // For prediction type engagements, prediction_hash should not be empty (uses E_INVALID_ENGAGEMENT)
+    let prediction_hash = odx::datatypes::get_engagement_prediction_hash(&engagement);
+    if (engagement_type == odx::datatypes::engagement_type_prediction()) {
+        assert!(std::vector::length(&prediction_hash) > 0, E_INVALID_ENGAGEMENT);
+    };
     
     let ip_token_id = object::id(ip_token);
     let user_address = odx::datatypes::get_engagement_user_address(&engagement);
@@ -270,7 +262,8 @@ public fun distribute_reward(
     };
     
     // Check contributor exists (uses E_CONTRIBUTOR_NOT_FOUND)
-    check_contributor_exists(registry, &key);
+    // Helper to check contributor exists (uses E_CONTRIBUTOR_NOT_FOUND)
+    assert!(table::contains(&registry.contributors, key), E_CONTRIBUTOR_NOT_FOUND);
     
     // Calculate reward
     let reward_amount = calculate_reward(config, registry, ip_token_id, user_address);
@@ -306,7 +299,7 @@ public fun distribute_reward(
             reason,
             tx_context::epoch_timestamp_ms(ctx),
         );
-        vector::push_back(&mut registry.reward_history, distribution);
+        std::vector::push_back(&mut registry.reward_history, distribution);
     };
     
     released
@@ -343,9 +336,9 @@ public fun get_contributor(
     };
     
     if (table::contains(&registry.contributors, key)) {
-        option::some(*table::borrow(&registry.contributors, key))
+        std::option::some(*table::borrow(&registry.contributors, key))
     } else {
-        option::none()
+        std::option::none()
     }
 }
 
@@ -363,6 +356,6 @@ public fun get_contributor_count(
 
 /// Get reward history length
 public fun get_reward_history_length(registry: &RewardsRegistry): u64 {
-    vector::length(&registry.reward_history)
+    std::vector::length(&registry.reward_history)
 }
 

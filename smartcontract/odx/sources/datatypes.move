@@ -9,7 +9,7 @@ module odx::datatypes;
 
 use sui::object::{Self, UID, ID};
 use sui::tx_context::TxContext;
-use sui::transfer;
+use std::vector;
 
 /// IP Token Metadata
 /// Stores information about an anime/manga/manhwa IP token
@@ -45,6 +45,7 @@ public struct IPToken has key {
 /// Engagement Data Structure
 /// Represents a single engagement event from a user
 /// Note: Actual data storage will be on Walrus, this is for on-chain tracking
+#[allow(unused_field)]
 public struct EngagementData has copy, drop, store {
     /// IP token ID this engagement is for
     ip_token_id: ID,
@@ -92,6 +93,29 @@ public struct PriceData has copy, drop, store {
     last_updated: u64,
     /// Base price (initial price)
     base_price: u64,
+}
+
+/// Trading Metrics
+/// Tracks order book and trading activity for price calculation
+public struct TradingMetrics has copy, drop, store {
+    /// IP token ID
+    ip_token_id: ID,
+    /// Highest bid price (scaled by 1e9)
+    highest_bid: u64,
+    /// Lowest ask price (scaled by 1e9)
+    lowest_ask: u64,
+    /// Order book midpoint price (scaled by 1e9)
+    midpoint_price: u64,
+    /// Total buy volume (24h)
+    buy_volume_24h: u64,
+    /// Total sell volume (24h)
+    sell_volume_24h: u64,
+    /// Last execution price (scaled by 1e9)
+    last_execution_price: u64,
+    /// Number of executed trades (24h)
+    trade_count_24h: u64,
+    /// Last update timestamp
+    last_updated: u64,
 }
 
 /// Contributor Record
@@ -440,4 +464,49 @@ public fun create_reward_distribution(
         timestamp,
     }
 }
+
+// TradingMetrics constructor
+public fun create_trading_metrics(
+    ip_token_id: ID,
+    highest_bid: u64,
+    lowest_ask: u64,
+    midpoint_price: u64,
+    buy_volume_24h: u64,
+    sell_volume_24h: u64,
+    last_execution_price: u64,
+    trade_count_24h: u64,
+    last_updated: u64,
+): TradingMetrics {
+    TradingMetrics {
+        ip_token_id,
+        highest_bid,
+        lowest_ask,
+        midpoint_price,
+        buy_volume_24h,
+        sell_volume_24h,
+        last_execution_price,
+        trade_count_24h,
+        last_updated,
+    }
+}
+
+// TradingMetrics getter functions
+public fun get_trading_highest_bid(metrics: &TradingMetrics): u64 { metrics.highest_bid }
+public fun get_trading_lowest_ask(metrics: &TradingMetrics): u64 { metrics.lowest_ask }
+public fun get_trading_midpoint_price(metrics: &TradingMetrics): u64 { metrics.midpoint_price }
+public fun get_trading_buy_volume_24h(metrics: &TradingMetrics): u64 { metrics.buy_volume_24h }
+public fun get_trading_sell_volume_24h(metrics: &TradingMetrics): u64 { metrics.sell_volume_24h }
+public fun get_trading_last_execution_price(metrics: &TradingMetrics): u64 { metrics.last_execution_price }
+public fun get_trading_trade_count_24h(metrics: &TradingMetrics): u64 { metrics.trade_count_24h }
+public fun get_trading_last_updated(metrics: &TradingMetrics): u64 { metrics.last_updated }
+
+// TradingMetrics setter functions
+public fun set_trading_highest_bid(metrics: &mut TradingMetrics, bid: u64) { metrics.highest_bid = bid }
+public fun set_trading_lowest_ask(metrics: &mut TradingMetrics, ask: u64) { metrics.lowest_ask = ask }
+public fun set_trading_midpoint_price(metrics: &mut TradingMetrics, midpoint: u64) { metrics.midpoint_price = midpoint }
+public fun set_trading_buy_volume_24h(metrics: &mut TradingMetrics, volume: u64) { metrics.buy_volume_24h = volume }
+public fun set_trading_sell_volume_24h(metrics: &mut TradingMetrics, volume: u64) { metrics.sell_volume_24h = volume }
+public fun set_trading_last_execution_price(metrics: &mut TradingMetrics, price: u64) { metrics.last_execution_price = price }
+public fun set_trading_trade_count_24h(metrics: &mut TradingMetrics, count: u64) { metrics.trade_count_24h = count }
+public fun set_trading_last_updated(metrics: &mut TradingMetrics, timestamp: u64) { metrics.last_updated = timestamp }
 

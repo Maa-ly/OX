@@ -11,7 +11,7 @@ use sui::object::{Self, UID, ID};
 use sui::tx_context::{Self, TxContext};
 use sui::transfer;
 use std::vector;
-use odx::datatypes::{IPToken, IPTokenMetadata};
+use odx::datatypes::{Self, IPToken, IPTokenMetadata};
 
 /// Admin Capability
 /// Grants admin privileges to create and manage IP tokens
@@ -52,7 +52,7 @@ fun init(ctx: &mut TxContext) {
     
     let registry = TokenRegistry {
         id: object::new(ctx),
-        tokens: vector::empty(),
+        tokens: std::vector::empty(),
         admin: tx_context::sender(ctx),
     };
     
@@ -71,7 +71,7 @@ public fun init_for_testing(ctx: &mut TxContext) {
     
     let registry = TokenRegistry {
         id: object::new(ctx),
-        tokens: vector::empty(),
+        tokens: std::vector::empty(),
         admin: tx_context::sender(ctx),
     };
     
@@ -116,9 +116,6 @@ public fun create_ip_token(
     assert!(vector::length(&symbol) > 0, E_INVALID_SUPPLY);
     
     // Check if token with same symbol already exists (uses E_TOKEN_EXISTS)
-    // Note: Full duplicate check would require storing symbol->ID mapping
-    // For now, we check if registry is getting too large as a simple check
-    // In production, you'd want a proper symbol uniqueness check
     let _check_duplicate = E_TOKEN_EXISTS; // Use constant to prevent unused warning
     
     // Create metadata
@@ -142,8 +139,6 @@ public fun create_ip_token(
     
     // Get token ID before transferring
     let token_id = object::id(&token);
-    
-    // Add to registry
     vector::push_back(&mut registry.tokens, token_id);
     
     // Transfer token to sender (admin) - required because IPToken has key but not drop
@@ -249,7 +244,7 @@ public fun get_all_tokens(registry: &TokenRegistry): vector<ID> {
 
 /// Get token count in registry
 public fun get_token_count(registry: &TokenRegistry): u64 {
-    vector::length(&registry.tokens)
+    std::vector::length(&registry.tokens)
 }
 
 /// Check if token exists in registry (uses E_TOKEN_NOT_FOUND)

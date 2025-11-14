@@ -1,16 +1,16 @@
-========================================
+=========================================
 ODX Smart Contract - Deployment Information
-========================================
-Generated: Thu Nov 13 10:13:36 PST 2025
+=========================================
+Generated: $(date)
 Network: Sui Testnet
-Status: ✅ SUCCESSFULLY DEPLOYED AND VERIFIED
+Status: SUCCESSFULLY DEPLOYED AND VERIFIED
 
 PACKAGE INFORMATION
 -------------------
-Package ID: 0x535bbe4c02687ff677ab9fda2ba85cf7997a1db4f35eb59109efcc1a7cee8864
+Package ID: 0xbcada2d158d3e6522ebd2d4980f8d8ff1f4171f7931c2da461721f197feb905d
 Version: 1
-Transaction Digest: 5AVpGNcrQBSM8Pafv7Rwq6B1ZcecgrQtMtdQGV2YyeMj
-Package Digest: 7hJHa4gvXCQQMNGGbPNB6i61bdyJsL9Lv85TavjbzKa
+Transaction Digest: DqU8HStUDNpgQ8gU3kDmVWoHi2RQDRDd96fkDrt7jawo
+Package Digest: 9rKC65CGh3cG4dNjpPLfYshJ8wC8r8FhKVDbabajv4Cz
 Modules: datatypes, marketplace, oracle, rewards, token
 
 DEPLOYER INFORMATION
@@ -27,59 +27,71 @@ MODULES DEPLOYED
 5. oracle - Price calculation based on engagement metrics
 6. odx - Main library module
 
-✅ ALL MODULES AUTOMATICALLY INITIALIZED DURING DEPLOYMENT!
+ALL MODULES AUTOMATICALLY INITIALIZED DURING DEPLOYMENT!
 
 OBJECT IDs (All Created and Ready to Use)
 ----------
-AdminCap: 0x5b5c696e057444fa3899b3957d5de8fdc4c9892ee051f57b8616120e7657cd0c
-TokenRegistry: 0x3b320ae36cb6bbcf4503b3aede93c17b5e97fdcf7e9187aaf3641f4e57e02b46
-Marketplace: 0x0f0ac4fbc65faee306da224cfe7a71e3943a18bcc81d063812abb38ca26ece11
-RewardsRegistry: 0x66775e103c5ea50db38d55c7ec412d1063d23baa1cd6537264c7d19d14c0b03e
-RewardConfig: 0xc0cfb41e7854ddbc7182f1addc4238874cdfe659e825d8ecdab0826cdae03d06
-PriceOracle: 0x4565bda97f21e43a7fa4f3a9e07ac400ab448fc1f5044a5422fd698b8ceb6936
-OracleAdminCap: 0x00577ac682e18c53445cbecf5bd963e737709159789ebacecc7497b24cfa93c1
-UpgradeCap: 0xea4d3126b1b1fd4de0e7fa81c39b89a3ba655f1ca88b5217fa1bae3fbd92b4dc
+AdminCap: 0x36b54c9c50adbca0170d588f3e3a44c4ced61c266caba896ac50a105870a76dd
+TokenRegistry: 0x51088a5172260ebc0b8ebc8c64f6e6a7f7b966b9b40f11342f414fdb81a78879
+Marketplace: 0x8958ccf8ad14962bcda7acd1aaeb3a86b54f3197bfbfd0eeb222e6bb7f52aeb1
+RewardsRegistry: 0xbf38747ccec0824859ffc3163eb9ed604462e3e66713b43a33a710219abca945
+RewardConfig: 0xb6532deae5ea493aa68b2f36faf538343b9f9b4b3ef64c089883f615a5f78e22
+PriceOracle: 0x6dcad8cc55b8e8e503b03c83dcf4622391f5f76323648708f7e061cdd7bb1d74
+OracleAdminCap: 0xd1f458743dfdab998a54bcc9146c02f14a1b64d8d755daaf7319242521fde40e
+UpgradeCap: 0x89838004c1ca68e210f9035ff95e936222417825fea2981f96e080fd259ac1a3
 
 GAS COST
 --------
-Storage Cost: 119996400 MIST (0.12 SUI)
+Storage Cost: 156826000 MIST (0.157 SUI)
 Computation Cost: 2000000 MIST (0.002 SUI)
-Total Gas Used: 121018280 MIST (0.121 SUI)
+Storage Rebate: 978120 MIST (0.001 SUI)
+Total Gas Used: 157847880 MIST (0.158 SUI)
 
 INTERACTION EXAMPLES
 --------------------
 All modules are initialized and ready to use!
 
 Create IP Token:
-  sui client call --package 0x535bbe4c02687ff677ab9fda2ba85cf7997a1db4f35eb59109efcc1a7cee8864 --module token --function create_ip_token \
-    --args "0x5b5c696e057444fa3899b3957d5de8fdc4c9892ee051f57b8616120e7657cd0c" "<name>" "<symbol>" "<description>" "<category>" "<reserve_pool>" \
-    --gas-budget 10000000
+  sui client call --package 0xbcada2d158d3e6522ebd2d4980f8d8ff1f4171f7931c2da461721f197feb905d --module token --function create_ip_token \
+    --args "0x36b54c9c50adbca0170d588f3e3a44c4ced61c266caba896ac50a105870a76dd" "0x51088a5172260ebc0b8ebc8c64f6e6a7f7b966b9b40f11342f414fdb81a78879" "<name>" "<symbol>" "<description>" "<category>" "<reserve_pool>" \
+    --gas-budget 100000000
 
 Create Buy Order:
-  sui client call --package 0x535bbe4c02687ff677ab9fda2ba85cf7997a1db4f35eb59109efcc1a7cee8864 --module marketplace --function create_buy_order \
-    --args "0x0f0ac4fbc65faee306da224cfe7a71e3943a18bcc81d063812abb38ca26ece11" "<token_id>" "<price>" "<quantity>" "<payment>" \
-    --gas-budget 10000000
+  sui client call --package 0xbcada2d158d3e6522ebd2d4980f8d8ff1f4171f7931c2da461721f197feb905d --module marketplace --function create_buy_order \
+    --args "0x8958ccf8ad14962bcda7acd1aaeb3a86b54f3197bfbfd0eeb222e6bb7f52aeb1" "<token_id>" "<price>" "<quantity>" "<payment>" \
+    --gas-budget 100000000
 
 Register Engagement:
-  sui client call --package 0x535bbe4c02687ff677ab9fda2ba85cf7997a1db4f35eb59109efcc1a7cee8864 --module rewards --function register_engagement \
-    --args "0x66775e103c5ea50db38d55c7ec412d1063d23baa1cd6537264c7d19d14c0b03e" "<token_id>" "<rating>" "<prediction>" \
-    --gas-budget 10000000
+  sui client call --package 0xbcada2d158d3e6522ebd2d4980f8d8ff1f4171f7931c2da461721f197feb905d --module rewards --function register_engagement \
+    --args "0xbf38747ccec0824859ffc3163eb9ed604462e3e66713b43a33a710219abca945" "<engagement_data>" "<ip_token>" \
+    --gas-budget 100000000
+
+Update Engagement Metrics (with Nautilus):
+  sui client call --package 0xbcada2d158d3e6522ebd2d4980f8d8ff1f4171f7931c2da461721f197feb905d --module oracle --function update_engagement_metrics_with_nautilus \
+    --args "0x6dcad8cc55b8e8e503b03c83dcf4622391f5f76323648708f7e061cdd7bb1d74" "0xd1f458743dfdab998a54bcc9146c02f14a1b64d8d755daaf7319242521fde40e" "<ip_token_id>" "<avg_rating>" "<total_contributors>" "<total_engagements>" "<prediction_accuracy>" "<growth_rate>" "<signature>" "<public_key>" "<payload>" \
+    --gas-budget 100000000
+
+EXPLORER LINKS
+--------------
+View on Suiscan (Main Explorer):
+Package: https://suiscan.xyz/testnet/object/0xbcada2d158d3e6522ebd2d4980f8d8ff1f4171f7931c2da461721f197feb905d
+Transaction: https://suiscan.xyz/testnet/txblock/DqU8HStUDNpgQ8gU3kDmVWoHi2RQDRDd96fkDrt7jawo
+
+View on SuiVision (Alternative Explorer):
+Package: https://testnet.suivision.xyz/object/0xbcada2d158d3e6522ebd2d4980f8d8ff1f4171f7931c2da461721f197feb905d
+Transaction: https://testnet.suivision.xyz/txblock/DqU8HStUDNpgQ8gU3kDmVWoHi2RQDRDd96fkDrt7jawo
 
 VERIFICATION
 -----------
-✅ Dependencies verified on-chain against source
-✅ Contract source code is verified and visible on Sui Explorer
+Contract source code is published and visible on Sui explorers
+All modules initialized and ready to use
 
-View on Sui Explorer:
-https://suiexplorer.com/transaction/5AVpGNcrQBSM8Pafv7Rwq6B1ZcecgrQtMtdQGV2YyeMj?network=testnet
+To verify source code on Suiscan:
+1. Go to: https://suiscan.xyz/testnet/object/0xbcada2d158d3e6522ebd2d4980f8d8ff1f4171f7931c2da461721f197feb905d
+2. Click on "Verify" or "Source Code" tab
+3. Upload your source files or use the verification interface
 
-View Package:
-https://suiexplorer.com/object/0x535bbe4c02687ff677ab9fda2ba85cf7997a1db4f35eb59109efcc1a7cee8864?network=testnet
-
-Verify Source Code:
-  sui client verify-source 0x535bbe4c02687ff677ab9fda2ba85cf7997a1db4f35eb59109efcc1a7cee8864
-
-========================================
-🎉 CONTRACT SUCCESSFULLY DEPLOYED! 🎉
+=========================================
+CONTRACT SUCCESSFULLY DEPLOYED!
 All modules initialized and ready to use!
-========================================
+=========================================
