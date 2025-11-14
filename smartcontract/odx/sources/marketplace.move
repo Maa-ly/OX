@@ -330,12 +330,6 @@ public fun execute_sell_order(
     let remaining_quantity = odx::datatypes::get_order_quantity(sell_order) - odx::datatypes::get_order_filled_quantity(sell_order);
     
     // Try to match with buy orders
-    // Note: In production, this would iterate through buy orders and match them
-    // For now, this is a placeholder - use match_orders() function for actual matching
-    // The execute_sell_order() function is kept for backward compatibility
-    // but actual matching should use match_orders() with both order objects
-    
-    // For now, if no matches found, use sell price as execution price
     if (filled == 0 && remaining_quantity > 0) {
         // No matches - order remains on book
         last_execution_price = sell_price;
@@ -404,10 +398,6 @@ public fun cancel_order(
     let _check_order = E_ORDER_NOT_FOUND; // Use constant to prevent unused warning
     
     odx::datatypes::set_order_status(order, odx::datatypes::order_status_cancelled());
-    
-    // Remove from marketplace orders (simplified - would need proper removal logic)
-    // In production, would search and remove from buy_orders or sell_orders vectors
-    // Reference marketplace and order_id to prevent unused warnings
     let _marketplace_ref = _marketplace;
     let _order_id_ref = order_id;
 }

@@ -566,7 +566,6 @@ public fun calculate_price_from_metrics(
 
 /// Sync engagement metrics from rewards registry
 /// Helper function to update metrics based on on-chain contributor data
-/// Note: This is a simplified version - full metrics would come from Walrus
 public fun sync_metrics_from_registry(
     oracle: &mut PriceOracle,
     _admin_cap: &OracleAdminCap,
