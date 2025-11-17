@@ -3,8 +3,6 @@
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import Image from "next/image";
-import { useState, useEffect } from "react";
-import { AnimatedGridBackground, GradientOrbs } from "../components/background";
 import { HeroCarousel } from "../components/hero-carousel";
 
 // Dynamically import wallet components with SSR disabled to avoid WalletContext errors
@@ -34,17 +32,6 @@ const NavWalletButton = dynamic(
 );
 
 export default function Home() {
-  const [isMobile, setIsMobile] = useState(false);
-
-  useEffect(() => {
-    const checkMobile = () => {
-      setIsMobile(window.innerWidth < 768);
-    };
-    checkMobile();
-    window.addEventListener("resize", checkMobile);
-    return () => window.removeEventListener("resize", checkMobile);
-  }, []);
-
   return (
     <div className="min-h-screen bg-[#0a0a0f] text-white overflow-x-hidden">
       {/* Navigation */}
@@ -96,23 +83,7 @@ export default function Home() {
         </div>
 
         {/* Content Overlay */}
-        <div
-          className="relative z-10 h-full flex items-center justify-center"
-          style={
-            isMobile
-              ? {
-                  transform: "rotate(90deg)",
-                  width: "100vh",
-                  height: "100vw",
-                  position: "absolute",
-                  top: "50%",
-                  left: "50%",
-                  marginTop: "-50vw",
-                  marginLeft: "-50vh",
-                }
-              : {}
-          }
-        >
+        <div className="relative z-10 h-full flex items-center justify-center">
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 w-full">
             <div className="mx-auto max-w-4xl text-center">
               <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-cyan-500/20 bg-cyan-500/10 backdrop-blur-sm px-4 py-1.5 text-sm text-cyan-400">
@@ -122,7 +93,7 @@ export default function Home() {
 
               <h1 className="text-5xl font-bold tracking-tight sm:text-6xl lg:text-7xl text-white drop-shadow-lg">
                 <span className="block">The Stock Market</span>
-                <span className="block bg-gradient-to-r from-cyan-400 via-blue-400 to-cyan-300 bg-clip-text text-transparent">
+                <span className="block bg-linear-to-r from-cyan-400 via-blue-400 to-cyan-300 bg-clip-text text-transparent">
                   for Fandom Data
                 </span>
               </h1>
@@ -165,10 +136,10 @@ export default function Home() {
           </div>
 
           <div className="mx-auto mt-20 grid max-w-5xl grid-cols-1 gap-8 lg:grid-cols-3">
-            <div className="group relative overflow-hidden rounded-2xl border border-zinc-800 bg-gradient-to-br from-zinc-900/50 to-zinc-900/30 p-8 transition-all hover:border-cyan-500/50 hover:shadow-lg hover:shadow-cyan-500/10">
+            <div className="group relative overflow-hidden rounded-2xl border border-zinc-800 bg-linear-to-br from-zinc-900/50 to-zinc-900/30 p-8 transition-all hover:border-cyan-500/50 hover:shadow-lg hover:shadow-cyan-500/10">
               <div className="absolute right-0 top-0 h-32 w-32 rounded-full bg-cyan-500/10 blur-3xl transition-all group-hover:bg-cyan-500/20" />
               <div className="relative">
-                <div className="mb-6 flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600">
+                <div className="mb-6 flex h-12 w-12 items-center justify-center rounded-xl bg-linear-to-br from-cyan-500 to-blue-600">
                   <svg
                     className="h-6 w-6 text-white"
                     fill="none"
@@ -194,10 +165,10 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="group relative overflow-hidden rounded-2xl border border-zinc-800 bg-gradient-to-br from-zinc-900/50 to-zinc-900/30 p-8 transition-all hover:border-cyan-500/50 hover:shadow-lg hover:shadow-cyan-500/10">
+            <div className="group relative overflow-hidden rounded-2xl border border-zinc-800 bg-linear-to-br from-zinc-900/50 to-zinc-900/30 p-8 transition-all hover:border-cyan-500/50 hover:shadow-lg hover:shadow-cyan-500/10">
               <div className="absolute right-0 top-0 h-32 w-32 rounded-full bg-blue-500/10 blur-3xl transition-all group-hover:bg-blue-500/20" />
               <div className="relative">
-                <div className="mb-6 flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-cyan-600">
+                <div className="mb-6 flex h-12 w-12 items-center justify-center rounded-xl bg-linear-to-br from-blue-500 to-cyan-600">
                   <svg
                     className="h-6 w-6 text-white"
                     fill="none"
@@ -223,10 +194,10 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="group relative overflow-hidden rounded-2xl border border-zinc-800 bg-gradient-to-br from-zinc-900/50 to-zinc-900/30 p-8 transition-all hover:border-cyan-500/50 hover:shadow-lg hover:shadow-cyan-500/10">
+            <div className="group relative overflow-hidden rounded-2xl border border-zinc-800 bg-linear-to-br from-zinc-900/50 to-zinc-900/30 p-8 transition-all hover:border-cyan-500/50 hover:shadow-lg hover:shadow-cyan-500/10">
               <div className="absolute right-0 top-0 h-32 w-32 rounded-full bg-cyan-500/10 blur-3xl transition-all group-hover:bg-cyan-500/20" />
               <div className="relative">
-                <div className="mb-6 flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600">
+                <div className="mb-6 flex h-12 w-12 items-center justify-center rounded-xl bg-linear-to-br from-cyan-500 to-blue-600">
                   <svg
                     className="h-6 w-6 text-white"
                     fill="none"
@@ -300,11 +271,11 @@ export default function Home() {
               ].map((step, index) => (
                 <div key={index} className="relative flex gap-8">
                   <div className="flex flex-col items-center">
-                    <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-500 to-blue-600 text-2xl font-bold text-white shadow-lg shadow-cyan-500/25">
+                    <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-linear-to-br from-cyan-500 to-blue-600 text-2xl font-bold text-white shadow-lg shadow-cyan-500/25">
                       {step.number}
                     </div>
                     {index < 3 && (
-                      <div className="mt-4 h-full w-0.5 bg-gradient-to-b from-cyan-500/50 to-transparent" />
+                      <div className="mt-4 h-full w-0.5 bg-linear-to-b from-cyan-500/50 to-transparent" />
                     )}
                   </div>
                   <div className="flex-1 pb-12">
@@ -427,9 +398,9 @@ export default function Home() {
             ].map((feature, index) => (
               <div
                 key={index}
-                className="group relative overflow-hidden rounded-xl border border-zinc-800 bg-gradient-to-br from-zinc-900/50 to-zinc-900/30 p-6 transition-all hover:border-cyan-500/50 hover:shadow-lg hover:shadow-cyan-500/10"
+                className="group relative overflow-hidden rounded-xl border border-zinc-800 bg-linear-to-br from-zinc-900/50 to-zinc-900/30 p-6 transition-all hover:border-cyan-500/50 hover:shadow-lg hover:shadow-cyan-500/10"
               >
-                <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-gradient-to-br from-cyan-500/20 to-blue-600/20 text-cyan-400">
+                <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-linear-to-br from-cyan-500/20 to-blue-600/20 text-cyan-400">
                   {feature.icon}
                 </div>
                 <h3 className="text-lg font-semibold text-white">
@@ -443,7 +414,7 @@ export default function Home() {
       </section>
 
       {/* CTA */}
-      <section className="border-t border-zinc-800 bg-gradient-to-br from-zinc-950 to-zinc-900 py-24 sm:py-32 relative z-20">
+      <section className="border-t border-zinc-800 bg-linear-to-br from-zinc-950 to-zinc-900 py-24 sm:py-32 relative z-20">
         <div className="mx-auto max-w-4xl px-4 text-center sm:px-6 lg:px-8">
           <h2 className="text-4xl font-bold tracking-tight sm:text-5xl">
             Ready to Transform Your Fandom?

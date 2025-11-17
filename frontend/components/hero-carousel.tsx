@@ -11,16 +11,6 @@ const carouselImages = [
 
 export function HeroCarousel() {
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [isMobile, setIsMobile] = useState(false);
-
-  useEffect(() => {
-    const checkMobile = () => {
-      setIsMobile(window.innerWidth < 768);
-    };
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
-    return () => window.removeEventListener('resize', checkMobile);
-  }, []);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -42,22 +32,7 @@ export function HeroCarousel() {
   };
 
   return (
-    <div 
-      className={`relative w-full overflow-hidden h-screen ${
-        isMobile ? 'md:h-screen' : ''
-      }`}
-      style={isMobile ? {
-        width: '100vh',
-        height: '100vw',
-        transform: 'rotate(90deg)',
-        transformOrigin: 'center center',
-        position: 'absolute',
-        top: '50%',
-        left: '50%',
-        marginTop: '-50vw',
-        marginLeft: '-50vh',
-      } : {}}
-    >
+    <div className="relative w-full overflow-hidden h-screen">
       {/* Carousel Images */}
       <div className="relative w-full h-full">
         {carouselImages.map((image, index) => (
@@ -114,4 +89,3 @@ export function HeroCarousel() {
     </div>
   );
 }
-
