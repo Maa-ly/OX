@@ -4,6 +4,7 @@ import { useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import Image from "next/image";
+import { MobileBottomNav, MobileSidebar } from "@/components/mobile-nav";
 
 const NavWalletButton = dynamic(
   () =>
@@ -36,6 +37,7 @@ export default function PortfolioPage() {
   const [activeTab, setActiveTab] = useState<
     "assets" | "positions" | "history"
   >("assets");
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   // Mock data
   const totalValue = 25847.32;
@@ -87,58 +89,81 @@ export default function PortfolioPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-[#0a0a0f] text-white">
+    <div className="min-h-screen bg-[#0a0a0f] text-white pb-20 md:pb-0">
       {/* Navigation */}
       <nav className="fixed top-0 left-0 right-0 z-50 border-b border-zinc-800/50 bg-[#0a0a0f]/95 backdrop-blur-xl">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between">
-            <Link
-              href="/"
-              className="flex items-center gap-3 group cursor-pointer"
-            >
-              <div className="flex h-10 w-10 items-center justify-center transition-transform group-hover:scale-110">
-                <Image
-                  src="/favicon.svg"
-                  alt="ODX Logo"
-                  width={40}
-                  height={40}
-                  className="w-10 h-10"
-                />
-              </div>
-              <div>
-                <div className="text-lg font-bold tracking-tight">ODX</div>
-                <div className="text-xs text-zinc-400">Otaku Data Exchange</div>
-              </div>
-            </Link>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setIsSidebarOpen(true)}
+                className="md:hidden p-2 hover:bg-zinc-800 rounded-lg transition-colors"
+                aria-label="Open menu"
+              >
+                <svg
+                  className="w-6 h-6"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M4 6h16M4 12h16M4 18h16"
+                  />
+                </svg>
+              </button>
+              <Link
+                href="/"
+                className="flex items-center gap-3 group cursor-pointer"
+              >
+                <div className="flex h-10 w-10 items-center justify-center transition-transform group-hover:scale-110">
+                  <Image
+                    src="/favicon.svg"
+                    alt="ODX Logo"
+                    width={40}
+                    height={40}
+                    className="w-10 h-10"
+                  />
+                </div>
+                <div className="hidden sm:block">
+                  <div className="text-lg font-bold tracking-tight">ODX</div>
+                  <div className="text-xs text-zinc-400">
+                    Otaku Data Exchange
+                  </div>
+                </div>
+              </Link>
+            </div>
 
             <div className="flex items-center gap-6">
               <Link
                 href="/markets"
-                className="text-sm font-medium text-zinc-300 transition-colors hover:text-white"
+                className="hidden md:block text-sm font-medium text-zinc-300 transition-colors hover:text-white"
               >
                 Markets
               </Link>
               <Link
                 href="/trade"
-                className="text-sm font-medium text-zinc-300 transition-colors hover:text-white"
+                className="hidden md:block text-sm font-medium text-zinc-300 transition-colors hover:text-white"
               >
                 Trade
               </Link>
               <Link
                 href="/portfolio"
-                className="text-sm font-medium text-cyan-400 transition-colors hover:text-white"
+                className="hidden md:block text-sm font-medium text-cyan-400 transition-colors hover:text-white"
               >
                 Portfolio
               </Link>
               <Link
                 href="/discover"
-                className="text-sm font-medium text-zinc-300 transition-colors hover:text-white"
+                className="hidden md:block text-sm font-medium text-zinc-300 transition-colors hover:text-white"
               >
                 Discover
               </Link>
               <Link
                 href="/predictions"
-                className="text-sm font-medium text-zinc-300 transition-colors hover:text-white"
+                className="hidden md:block text-sm font-medium text-zinc-300 transition-colors hover:text-white"
               >
                 Predictions
               </Link>
@@ -232,11 +257,13 @@ export default function PortfolioPage() {
 
         {/* Assets Table */}
         {activeTab === "assets" && (
-          <div className="bg-zinc-900/50 border border-zinc-800 rounded-lg overflow-hidden">
-            <table className="w-full">
+          <div className="bg-zinc-900/50 border border-zinc-800 rounded-lg overflow-x-auto">
+            <table className="w-full min-w-[700px]">
               <thead className="bg-zinc-900 border-b border-zinc-800">
                 <tr className="text-left text-sm text-zinc-400">
-                  <th className="py-4 px-6">Asset</th>
+                  <th className="py-4 px-6 sticky left-0 bg-zinc-900 z-10">
+                    Asset
+                  </th>
                   <th className="py-4 px-6 text-right">Balance</th>
                   <th className="py-4 px-6 text-right">Value (USDC)</th>
                   <th className="py-4 px-6 text-right">24h Change</th>
@@ -249,7 +276,7 @@ export default function PortfolioPage() {
                     key={asset.symbol}
                     className="border-b border-zinc-800/50 hover:bg-zinc-800/30 transition-colors"
                   >
-                    <td className="py-4 px-6">
+                    <td className="py-4 px-6 sticky left-0 bg-zinc-900/50 backdrop-blur-sm">
                       <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-full bg-linear-to-br from-cyan-500 to-blue-600 flex items-center justify-center text-sm font-bold">
                           {asset.symbol[0]}
@@ -296,17 +323,19 @@ export default function PortfolioPage() {
 
         {/* Positions Table */}
         {activeTab === "positions" && (
-          <div className="bg-zinc-900/50 border border-zinc-800 rounded-lg overflow-hidden">
+          <div className="bg-zinc-900/50 border border-zinc-800 rounded-lg overflow-x-auto">
             {positions.length === 0 ? (
               <div className="text-center py-12">
                 <div className="text-4xl mb-4">📊</div>
                 <div className="text-zinc-400">No active positions</div>
               </div>
             ) : (
-              <table className="w-full">
+              <table className="w-full min-w-[900px]">
                 <thead className="bg-zinc-900 border-b border-zinc-800">
                   <tr className="text-left text-sm text-zinc-400">
-                    <th className="py-4 px-6">Symbol</th>
+                    <th className="py-4 px-6 sticky left-0 bg-zinc-900 z-10">
+                      Symbol
+                    </th>
                     <th className="py-4 px-6">Side</th>
                     <th className="py-4 px-6 text-right">Size</th>
                     <th className="py-4 px-6 text-right">Entry Price</th>
@@ -322,7 +351,7 @@ export default function PortfolioPage() {
                       key={index}
                       className="border-b border-zinc-800/50 hover:bg-zinc-800/30 transition-colors"
                     >
-                      <td className="py-4 px-6 font-semibold">
+                      <td className="py-4 px-6 font-semibold sticky left-0 bg-zinc-900/50 backdrop-blur-sm">
                         {position.symbol}
                       </td>
                       <td className="py-4 px-6">
@@ -388,6 +417,12 @@ export default function PortfolioPage() {
           </div>
         )}
       </div>
+
+      <MobileSidebar
+        isOpen={isSidebarOpen}
+        onClose={() => setIsSidebarOpen(false)}
+      />
+      <MobileBottomNav />
     </div>
   );
 }

@@ -15,6 +15,7 @@ export function TradingChart({
 }: TradingChartProps) {
   const [timeframe, setTimeframe] = useState("1h");
   const [chartType, setChartType] = useState("candles");
+  const [showIndicators, setShowIndicators] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -49,14 +50,14 @@ export function TradingChart({
 
       // Draw grid
       const gridSpacing = 50;
-      for (let i = 0; i < height; i += gridSpacing) {
+      for (let i = gridSpacing; i <= height; i += gridSpacing) {
         ctx.beginPath();
         ctx.moveTo(0, i);
         ctx.lineTo(width, i);
         ctx.stroke();
       }
 
-      for (let i = 0; i < width; i += gridSpacing) {
+      for (let i = gridSpacing; i <= width; i += gridSpacing) {
         ctx.beginPath();
         ctx.moveTo(i, 0);
         ctx.lineTo(i, height);
@@ -180,24 +181,51 @@ export function TradingChart({
         </div>
 
         <div className="flex items-center gap-2">
-          <button
-            className="p-2 text-zinc-500 hover:text-white"
-            title="Indicators"
-          >
-            <svg
-              className="w-4 h-4"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
+          <div className="relative">
+            <button
+              onClick={() => setShowIndicators(!showIndicators)}
+              className="p-2 text-zinc-500 hover:text-white"
+              title="Indicators"
             >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"
-              />
-            </svg>
-          </button>
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M16 8v8m-4-5v5m-4-2v2m-2 4h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                />
+              </svg>
+            </button>
+            {showIndicators && (
+              <div className="absolute top-full right-0 mt-2 w-48 bg-zinc-900 border border-zinc-800 rounded-lg shadow-xl z-50">
+                <div className="p-2">
+                  <div className="text-xs font-semibold text-zinc-400 px-2 py-1">
+                    INDICATORS
+                  </div>
+                  <button className="w-full text-left px-2 py-2 text-sm hover:bg-zinc-800 rounded transition-colors">
+                    Moving Average
+                  </button>
+                  <button className="w-full text-left px-2 py-2 text-sm hover:bg-zinc-800 rounded transition-colors">
+                    RSI
+                  </button>
+                  <button className="w-full text-left px-2 py-2 text-sm hover:bg-zinc-800 rounded transition-colors">
+                    MACD
+                  </button>
+                  <button className="w-full text-left px-2 py-2 text-sm hover:bg-zinc-800 rounded transition-colors">
+                    Bollinger Bands
+                  </button>
+                  <button className="w-full text-left px-2 py-2 text-sm hover:bg-zinc-800 rounded transition-colors">
+                    Volume
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
           {onToggleFullscreen && (
             <button
               onClick={onToggleFullscreen}

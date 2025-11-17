@@ -1,9 +1,11 @@
 "use client";
 
+import { useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import Image from "next/image";
 import { HeroCarousel } from "../components/hero-carousel";
+import { MobileBottomNav, MobileSidebar } from "@/components/mobile-nav";
 
 // Dynamically import wallet components with SSR disabled to avoid WalletContext errors
 const WalletButton = dynamic(
@@ -32,30 +34,55 @@ const NavWalletButton = dynamic(
 );
 
 export default function Home() {
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
   return (
-    <div className="min-h-screen bg-[#0a0a0f] text-white overflow-x-hidden">
+    <div className="min-h-screen bg-[#0a0a0f] text-white overflow-x-hidden pb-20 md:pb-0">
       {/* Navigation */}
       <nav className="fixed top-0 left-0 right-0 z-50 border-b border-zinc-800/50 bg-[#0a0a0f]/80 backdrop-blur-xl">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between">
-            <Link
-              href="/"
-              className="flex items-center gap-3 group cursor-pointer"
-            >
-              <div className="flex h-10 w-10 items-center justify-center transition-transform group-hover:scale-110">
-                <Image
-                  src="/favicon.svg"
-                  alt="ODX Logo"
-                  width={40}
-                  height={40}
-                  className="w-10 h-10"
-                />
-              </div>
-              <div>
-                <div className="text-lg font-bold tracking-tight">ODX</div>
-                <div className="text-xs text-zinc-400">Otaku Data Exchange</div>
-              </div>
-            </Link>
+            <div className="flex items-center gap-3">
+              {/* Hamburger Menu - Mobile Only */}
+              <button
+                onClick={() => setIsSidebarOpen(true)}
+                className="md:hidden p-2 hover:bg-zinc-800 rounded-lg transition-colors"
+                aria-label="Open menu"
+              >
+                <svg
+                  className="w-6 h-6"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M4 6h16M4 12h16M4 18h16"
+                  />
+                </svg>
+              </button>
+
+              <Link
+                href="/"
+                className="flex items-center gap-3 group cursor-pointer"
+              >
+                <div className="flex h-10 w-10 items-center justify-center transition-transform group-hover:scale-110">
+                  <Image
+                    src="/favicon.svg"
+                    alt="ODX Logo"
+                    width={40}
+                    height={40}
+                    className="w-10 h-10"
+                  />
+                </div>
+                <div className="hidden sm:block">
+                  <div className="text-lg font-bold tracking-tight">ODX</div>
+                  <div className="text-xs text-zinc-400">Otaku Data Exchange</div>
+                </div>
+              </Link>
+            </div>
             <div className="flex items-center gap-6">
               <Link
                 href="/markets"
@@ -469,6 +496,12 @@ export default function Home() {
           </div>
         </div>
       </footer>
+
+      {/* Mobile Sidebar */}
+      <MobileSidebar isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
+
+      {/* Mobile Bottom Navigation */}
+      <MobileBottomNav />
     </div>
   );
 }

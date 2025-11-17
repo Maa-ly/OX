@@ -10,6 +10,7 @@ import {
   TradePanel,
   PositionsPanel,
 } from "@/components/trading";
+import { MobileBottomNav, MobileSidebar } from "@/components/mobile-nav";
 
 const NavWalletButton = dynamic(
   () =>
@@ -43,31 +44,57 @@ export default function TradePage() {
     "positions" | "orders" | "history"
   >("positions");
   const [isChartFullscreen, setIsChartFullscreen] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   return (
-    <div className="min-h-screen bg-[#0a0a0f] text-white">
+    <div className="min-h-screen bg-[#0a0a0f] text-white pb-20 md:pb-0">
       {/* Navigation */}
       <nav className="fixed top-0 left-0 right-0 z-50 border-b border-zinc-800/50 bg-[#0a0a0f]/95 backdrop-blur-xl">
         <div className="mx-auto max-w-full px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between">
-            <Link
-              href="/"
-              className="flex items-center gap-3 group cursor-pointer"
-            >
-              <div className="flex h-10 w-10 items-center justify-center transition-transform group-hover:scale-110">
-                <Image
-                  src="/favicon.svg"
-                  alt="ODX Logo"
-                  width={40}
-                  height={40}
-                  className="w-10 h-10"
-                />
-              </div>
-              <div>
-                <div className="text-lg font-bold tracking-tight">ODX</div>
-                <div className="text-xs text-zinc-400">Otaku Data Exchange</div>
-              </div>
-            </Link>
+            <div className="flex items-center gap-3">
+              {/* Hamburger Menu - Mobile Only */}
+              <button
+                onClick={() => setIsSidebarOpen(true)}
+                className="md:hidden p-2 hover:bg-zinc-800 rounded-lg transition-colors"
+                aria-label="Open menu"
+              >
+                <svg
+                  className="w-6 h-6"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M4 6h16M4 12h16M4 18h16"
+                  />
+                </svg>
+              </button>
+
+              <Link
+                href="/"
+                className="flex items-center gap-3 group cursor-pointer"
+              >
+                <div className="flex h-10 w-10 items-center justify-center transition-transform group-hover:scale-110">
+                  <Image
+                    src="/favicon.svg"
+                    alt="ODX Logo"
+                    width={40}
+                    height={40}
+                    className="w-10 h-10"
+                  />
+                </div>
+                <div className="hidden sm:block">
+                  <div className="text-lg font-bold tracking-tight">ODX</div>
+                  <div className="text-xs text-zinc-400">
+                    Otaku Data Exchange
+                  </div>
+                </div>
+              </Link>
+            </div>
 
             <div className="flex items-center gap-4 lg:gap-6">
               <Link
@@ -196,7 +223,7 @@ export default function TradePage() {
         <div className="flex-1 flex flex-col overflow-y-auto">
           <div
             className={`${
-              isChartFullscreen ? "h-screen" : "min-h-[600px] lg:min-h-[700px]"
+              isChartFullscreen ? "h-screen" : "min-h-[400px] lg:min-h-[700px]"
             } flex flex-col lg:grid lg:grid-cols-12 gap-0`}
           >
             {/* Left Panel - Order Book (hidden on mobile or in fullscreen) */}
@@ -221,9 +248,9 @@ export default function TradePage() {
               />
             </div>
 
-            {/* Right Panel - Trade Form (hidden in fullscreen) */}
+            {/* Right Panel - Trade Form (below chart on mobile, side panel on desktop) */}
             {!isChartFullscreen && (
-              <div className="lg:col-span-3 border-t lg:border-t-0 lg:border-l border-zinc-800 h-auto lg:h-auto overflow-y-auto">
+              <div className="lg:col-span-3 border-t lg:border-t-0 lg:border-l border-zinc-800 overflow-y-auto">
                 <TradePanel mode={tradeMode} token={selectedToken} />
               </div>
             )}
@@ -241,6 +268,15 @@ export default function TradePage() {
           )}
         </div>
       </div>
+
+      {/* Mobile Sidebar */}
+      <MobileSidebar
+        isOpen={isSidebarOpen}
+        onClose={() => setIsSidebarOpen(false)}
+      />
+
+      {/* Mobile Bottom Navigation */}
+      <MobileBottomNav />
     </div>
   );
 }

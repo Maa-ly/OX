@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import Image from "next/image";
 import { CreatePredictionModal } from "@/components/predictions/create-prediction-modal";
+import { MobileBottomNav, MobileSidebar } from "@/components/mobile-nav";
 
 const NavWalletButton = dynamic(
   () =>
@@ -34,6 +35,7 @@ export default function PredictionsPage() {
     "predictions" | "ratings" | "my-predictions"
   >("predictions");
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   // Mock predictions data
   const predictions: Prediction[] = [
@@ -94,7 +96,7 @@ export default function PredictionsPage() {
   });
 
   return (
-    <div className="min-h-screen bg-[#0a0a0f] text-white">
+    <div className="min-h-screen bg-[#0a0a0f] text-white pb-20 md:pb-0">
       <CreatePredictionModal
         isOpen={showCreateModal}
         onClose={() => setShowCreateModal(false)}
@@ -103,53 +105,76 @@ export default function PredictionsPage() {
       <nav className="fixed top-0 left-0 right-0 z-50 border-b border-zinc-800/50 bg-[#0a0a0f]/95 backdrop-blur-xl">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between">
-            <Link
-              href="/"
-              className="flex items-center gap-3 group cursor-pointer"
-            >
-              <div className="flex h-10 w-10 items-center justify-center transition-transform group-hover:scale-110">
-                <Image
-                  src="/favicon.svg"
-                  alt="ODX Logo"
-                  width={40}
-                  height={40}
-                  className="w-10 h-10"
-                />
-              </div>
-              <div>
-                <div className="text-lg font-bold tracking-tight">ODX</div>
-                <div className="text-xs text-zinc-400">Otaku Data Exchange</div>
-              </div>
-            </Link>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setIsSidebarOpen(true)}
+                className="md:hidden p-2 hover:bg-zinc-800 rounded-lg transition-colors"
+                aria-label="Open menu"
+              >
+                <svg
+                  className="w-6 h-6"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M4 6h16M4 12h16M4 18h16"
+                  />
+                </svg>
+              </button>
+              <Link
+                href="/"
+                className="flex items-center gap-3 group cursor-pointer"
+              >
+                <div className="flex h-10 w-10 items-center justify-center transition-transform group-hover:scale-110">
+                  <Image
+                    src="/favicon.svg"
+                    alt="ODX Logo"
+                    width={40}
+                    height={40}
+                    className="w-10 h-10"
+                  />
+                </div>
+                <div className="hidden sm:block">
+                  <div className="text-lg font-bold tracking-tight">ODX</div>
+                  <div className="text-xs text-zinc-400">
+                    Otaku Data Exchange
+                  </div>
+                </div>
+              </Link>
+            </div>
 
             <div className="flex items-center gap-6">
               <Link
                 href="/markets"
-                className="text-sm font-medium text-zinc-300 transition-colors hover:text-white"
+                className="hidden md:block text-sm font-medium text-zinc-300 transition-colors hover:text-white"
               >
                 Markets
               </Link>
               <Link
                 href="/trade"
-                className="text-sm font-medium text-zinc-300 transition-colors hover:text-white"
+                className="hidden md:block text-sm font-medium text-zinc-300 transition-colors hover:text-white"
               >
                 Trade
               </Link>
               <Link
                 href="/portfolio"
-                className="text-sm font-medium text-zinc-300 transition-colors hover:text-white"
+                className="hidden md:block text-sm font-medium text-zinc-300 transition-colors hover:text-white"
               >
                 Portfolio
               </Link>
               <Link
                 href="/discover"
-                className="text-sm font-medium text-zinc-300 transition-colors hover:text-white"
+                className="hidden md:block text-sm font-medium text-zinc-300 transition-colors hover:text-white"
               >
                 Discover
               </Link>
               <Link
                 href="/predictions"
-                className="text-sm font-medium text-cyan-400 transition-colors hover:text-white"
+                className="hidden md:block text-sm font-medium text-cyan-400 transition-colors hover:text-white"
               >
                 Predictions
               </Link>
@@ -161,7 +186,7 @@ export default function PredictionsPage() {
 
       {/* Main Content */}
       <div className="pt-24 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto pb-12">
-        <div className="mb-8 flex items-center justify-between">
+        <div className="mb-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
             <h1 className="text-4xl font-bold mb-2">Predictions & Ratings</h1>
             <p className="text-zinc-400">
@@ -171,7 +196,7 @@ export default function PredictionsPage() {
           </div>
           <button
             onClick={() => setShowCreateModal(!showCreateModal)}
-            className="px-6 py-3 bg-cyan-500 hover:bg-cyan-600 text-white rounded-lg font-medium transition-colors"
+            className="w-full sm:w-auto px-6 py-3 bg-cyan-500 hover:bg-cyan-600 text-white rounded-lg font-medium transition-colors"
           >
             Create Prediction
           </button>
@@ -356,6 +381,12 @@ export default function PredictionsPage() {
           </div>
         )}
       </div>
+
+      <MobileSidebar
+        isOpen={isSidebarOpen}
+        onClose={() => setIsSidebarOpen(false)}
+      />
+      <MobileBottomNav />
     </div>
   );
 }
