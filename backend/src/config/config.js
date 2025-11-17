@@ -32,32 +32,32 @@ export const config = {
 
   // Oracle Configuration (NEW DEPLOYMENT)
   oracle: {
-    objectId: process.env.ORACLE_OBJECT_ID || '0xae22366356c30d091040f522a1fb472dea2fb12009f3ca0ff062c916b939ae85',
-    adminCapId: process.env.ADMIN_CAP_ID || '0x45459e99ab00066294c8a5daa8eaf24ff58bdcaa9e73f063dcf9128e5020cde9',
-    oracleAdminCapId: process.env.ORACLE_ADMIN_CAP_ID || '0x75f2ebc5d5ed1ed3480a869511fae45c0432442c8f5ec2df08107005cf2393de',
-    packageId: process.env.PACKAGE_ID || '0x4991f144c5297f3aee424c2dc66771b1b319cf6b6a3a1f36f62c141a5d9aae9e',
+    objectId: process.env.ORACLE_OBJECT_ID || '0x5c1456d721c8217e932591dd9d3b41753ee9f24246f2f651dd9e81bb8ad061c8',
+    adminCapId: process.env.ADMIN_CAP_ID || '0x43cdc1aeb7011a7a465e0c32d3fb5478e08d6f5e5bfc68e03152ec037a4e12d4',
+    oracleAdminCapId: process.env.ORACLE_ADMIN_CAP_ID || '0x75935be68ba984830004bb2271f93dc759d417d22ee1878dc84c75a42cb7b7b5',
+    packageId: process.env.PACKAGE_ID || '0x8d128256cb4958701d56a0c9ada318691e763549766263a7a1c3bd5e9f2c96d0',
   },
 
   // Marketplace Configuration (NEW DEPLOYMENT)
   marketplace: {
-    objectId: process.env.MARKETPLACE_OBJECT_ID || '0xfb20bbe2e3edb660a76bafd45685824ab8c0e7bb33d067ec94bff1d981f2cddf',
+    objectId: process.env.MARKETPLACE_OBJECT_ID || '0x7d54f6e2d129c428bca709c51891c582e69b4740a6218b42dd0633830a827ad1',
   },
 
   // Token Configuration (NEW DEPLOYMENT)
   token: {
-    registryId: process.env.TOKEN_REGISTRY_ID || '0x469e70a37d7a828712a0ae9c072e26bd4e167594e91901470cfd734348bf8be9',
-    adminCapId: process.env.ADMIN_CAP_ID || '0x45459e99ab00066294c8a5daa8eaf24ff58bdcaa9e73f063dcf9128e5020cde9',
+    registryId: process.env.TOKEN_REGISTRY_ID || '0xf5d8e0ebff481965342b4e49f276fa03912355ed5965d9f3bc6c88c630b502e4',
+    adminCapId: process.env.ADMIN_CAP_ID || '0x43cdc1aeb7011a7a465e0c32d3fb5478e08d6f5e5bfc68e03152ec037a4e12d4',
   },
 
   // Rewards Configuration (NEW DEPLOYMENT)
   rewards: {
-    registryId: process.env.REWARDS_REGISTRY_ID || '0x2dff8803979b53ab8938b8acdda687a4f7a06bf90faa0077ee4a510cd420d282',
-    configId: process.env.REWARD_CONFIG_ID || '0x1691ae0ec9b3fb622913061c001f9372076cea709417845d5f26137f2da26eb8',
+    registryId: process.env.REWARDS_REGISTRY_ID || '0x764865c8fb630963082eadf8c2ce1b3811505be63071ee5a4e8e3b8030b0e29b',
+    configId: process.env.REWARD_CONFIG_ID || '0xd98ffebb35e27dbb94708b177806f03baffb88cced488f70973b41d6cefa469d',
   },
 
   // Price Oracle Configuration (NEW DEPLOYMENT)
   priceOracle: {
-    objectId: process.env.PRICE_ORACLE_ID || '0xae22366356c30d091040f522a1fb472dea2fb12009f3ca0ff062c916b939ae85',
+    objectId: process.env.PRICE_ORACLE_ID || '0x5c1456d721c8217e932591dd9d3b41753ee9f24246f2f651dd9e81bb8ad061c8',
   },
 
   // Update Configuration
