@@ -61,6 +61,7 @@ export default function RootLayout({
       <body
         className={`${outfit.variable} antialiased font-sans`}
         style={{ fontFamily: "var(--font-outfit)" }}
+        suppressHydrationWarning
       >
         <Providers>{children}</Providers>
       </body>

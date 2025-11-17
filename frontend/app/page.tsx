@@ -57,18 +57,30 @@ export default function Home() {
               </div>
             </Link>
             <div className="flex items-center gap-6">
-              <a
-                href="#features"
+              <Link
+                href="/markets"
                 className="hidden text-sm font-medium text-zinc-300 transition-colors hover:text-white md:block"
               >
-                Features
-              </a>
-              <a
-                href="#how-it-works"
+                Markets
+              </Link>
+              <Link
+                href="/trade"
                 className="hidden text-sm font-medium text-zinc-300 transition-colors hover:text-white md:block"
               >
-                How It Works
-              </a>
+                Trade
+              </Link>
+              <Link
+                href="/discover"
+                className="hidden text-sm font-medium text-zinc-300 transition-colors hover:text-white md:block"
+              >
+                Discover
+              </Link>
+              <Link
+                href="/predictions"
+                className="hidden text-sm font-medium text-zinc-300 transition-colors hover:text-white md:block"
+              >
+                Predictions
+              </Link>
               <NavWalletButton />
             </div>
           </div>
