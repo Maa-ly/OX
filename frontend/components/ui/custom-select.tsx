@@ -68,23 +68,29 @@ export function CustomSelect({
       </button>
 
       {isOpen && (
-        <div className="absolute z-50 w-full mt-2 bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl overflow-hidden">
-          {options.map((option) => (
-            <button
-              key={option.value}
-              onClick={() => {
-                onChange(option.value);
-                setIsOpen(false);
-              }}
-              className={`w-full px-4 py-2 text-left hover:bg-zinc-800 transition-colors ${
-                option.value === value
-                  ? "bg-cyan-500/20 text-cyan-400"
-                  : "text-white"
-              }`}
-            >
-              {option.label}
-            </button>
-          ))}
+        <div className="absolute z-50 w-full mt-2 bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl overflow-hidden max-h-60 overflow-y-auto">
+          {options.length === 0 ? (
+            <div className="px-4 py-2 text-zinc-400 text-sm">
+              No options available
+            </div>
+          ) : (
+            options.map((option) => (
+              <button
+                key={option.value}
+                onClick={() => {
+                  onChange(option.value);
+                  setIsOpen(false);
+                }}
+                className={`w-full px-4 py-2 text-left hover:bg-zinc-800 transition-colors ${
+                  option.value === value
+                    ? "bg-cyan-500/20 text-cyan-400"
+                    : "text-white"
+                }`}
+              >
+                {option.label}
+              </button>
+            ))
+          )}
         </div>
       )}
     </div>

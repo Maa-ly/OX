@@ -1,44 +1,64 @@
 'use client';
 
-import { useWallet } from '@suiet/wallet-kit';
-import { useEffect, useState } from 'react';
+import { useWalletAuth } from '@/lib/hooks/useWalletAuth';
+import { useZkLogin } from '@/lib/hooks/useZkLogin';
+import { useAuthStore } from '@/lib/stores/auth-store';
+import { useEffect, useState, Suspense } from 'react';
 import Link from 'next/link';
-import { mockAPI, type UserPortfolio, type IPToken } from '@/lib/mocks/data';
+import { Header } from '@/components/shared/header';
+import { getUserPortfolio, type DashboardPortfolio, type IPToken } from '@/lib/utils/dashboard-api';
 
-export default function Dashboard() {
-  const wallet = useWallet();
-  const [portfolio, setPortfolio] = useState<UserPortfolio | null>(null);
+function DashboardContent() {
+  const { address: walletAddress } = useWalletAuth();
+  const { address: zkLoginAddress } = useZkLogin();
+  const { isAuthenticated, address } = useAuthStore();
+  const [portfolio, setPortfolio] = useState<DashboardPortfolio | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'overview' | 'contributions' | 'portfolio'>('overview');
 
+  // Get current address (prioritizes wallet over zkLogin)
+  const currentAddress = address || walletAddress || zkLoginAddress;
+
   useEffect(() => {
-    if (wallet.connected && wallet.account?.address) {
+    if (currentAddress) {
       loadPortfolio();
     }
-  }, [wallet.connected, wallet.account?.address]);
+  }, [currentAddress]);
 
   const loadPortfolio = async () => {
-    if (!wallet.account?.address) return;
+    if (!currentAddress) return;
     setLoading(true);
+    setError(null);
     try {
-      const data = await mockAPI.getUserPortfolio(wallet.account.address);
+      const data = await getUserPortfolio(currentAddress);
       setPortfolio(data);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to load portfolio:', error);
+      setError(error.message || 'Failed to load portfolio data');
+      // Fallback to empty portfolio
+      setPortfolio({
+        walletAddress: currentAddress,
+        totalContributions: 0,
+        totalRewards: 0,
+        ipTokensOwned: [],
+        recentContributions: [],
+        totalValue: 0,
+      });
     } finally {
       setLoading(false);
     }
   };
 
-  if (!wallet.connected) {
+  if (!isAuthenticated && !currentAddress) {
     return (
       <div className="min-h-screen bg-[#0a0a0f] text-white flex items-center justify-center">
         <div className="text-center">
-          <h2 className="text-2xl font-bold mb-4">Wallet Not Connected</h2>
-          <p className="text-zinc-400 mb-6">Please connect your wallet to view your dashboard</p>
+          <h2 className="text-2xl font-bold mb-4">Not Authenticated</h2>
+          <p className="text-zinc-400 mb-6">Please connect your wallet or sign in to view your dashboard</p>
           <Link
             href="/"
-            className="inline-block rounded-lg bg-gradient-to-r from-cyan-500 to-blue-600 px-6 py-3 font-semibold text-white hover:shadow-lg hover:shadow-cyan-500/25 transition-all"
+            className="inline-block rounded-lg bg-linear-to-r from-cyan-500 to-blue-600 px-6 py-3 font-semibold text-white hover:shadow-lg hover:shadow-cyan-500/25 transition-all"
           >
             Go to Home
           </Link>
@@ -58,75 +78,69 @@ export default function Dashboard() {
     );
   }
 
-  if (!portfolio) {
+  if (!portfolio && !loading) {
     return (
-      <div className="min-h-screen bg-[#0a0a0f] text-white flex items-center justify-center">
-        <div className="text-center">
-          <h2 className="text-2xl font-bold mb-4">No Data Found</h2>
-          <p className="text-zinc-400">Unable to load portfolio data</p>
+      <div className="min-h-screen bg-[#0a0a0f] text-white overflow-x-hidden">
+        <Header 
+          showWallet={true}
+          showContribute={true}
+          showMarketplace={true}
+        />
+        <div className="flex items-center justify-center min-h-[calc(100vh-4rem)]">
+          <div className="text-center">
+            <h2 className="text-2xl font-bold mb-4">No Data Found</h2>
+            <p className="text-zinc-400 mb-4">{error || 'Unable to load portfolio data'}</p>
+            <button
+              onClick={loadPortfolio}
+              className="rounded-lg bg-linear-to-r from-cyan-500 to-blue-600 px-6 py-3 font-semibold text-white hover:shadow-lg hover:shadow-cyan-500/25 transition-all"
+            >
+              Retry
+            </button>
+          </div>
         </div>
       </div>
     );
   }
 
+  if (!portfolio) {
+    return null; // Loading state already handled above
+  }
+
   return (
-    <div className="min-h-screen bg-[#0a0a0f] text-white">
-      {/* Navigation */}
-      <nav className="border-b border-zinc-800/50 bg-[#0a0a0f]/80 backdrop-blur-xl">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="flex h-16 items-center justify-between">
-            <Link href="/" className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-cyan-500 to-blue-600">
-                <span className="text-xl font-bold">O</span>
-              </div>
-              <div>
-                <div className="text-lg font-bold tracking-tight">ODX</div>
-                <div className="text-xs text-zinc-400">Otaku Data Exchange</div>
-              </div>
-            </Link>
-            <div className="flex items-center gap-4">
-              <Link
-                href="/marketplace"
-                className="text-sm font-medium text-zinc-300 transition-colors hover:text-white"
-              >
-                Marketplace
-              </Link>
-              <Link
-                href="/contribute"
-                className="rounded-lg border border-cyan-500/50 bg-gradient-to-r from-cyan-500/10 to-blue-600/10 px-4 py-2 text-sm font-medium text-cyan-400 transition-colors hover:border-cyan-400 hover:bg-cyan-500/20"
-              >
-                Contribute
-              </Link>
-              <div className="rounded-lg border border-zinc-700 bg-zinc-900/50 px-4 py-2 text-sm font-medium">
-                {wallet.account?.address.slice(0, 6)}...{wallet.account?.address.slice(-4)}
-              </div>
-            </div>
-          </div>
-        </div>
-      </nav>
+    <div className="min-h-screen bg-[#0a0a0f] text-white overflow-x-hidden">
+      <Header 
+        showWallet={true}
+        showContribute={true}
+        showMarketplace={true}
+      />
 
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
         {/* Header */}
         <div className="mb-8">
           <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
           <p className="mt-2 text-zinc-400">Welcome back! Here's your activity overview</p>
+          {error && (
+            <div className="mt-4 rounded-lg border border-yellow-500/50 bg-yellow-500/10 p-4">
+              <p className="text-yellow-400 text-sm">{error}</p>
+            </div>
+          )}
         </div>
 
         {/* Stats Grid */}
         <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4 mb-8">
-          <div className="rounded-xl border border-zinc-800 bg-gradient-to-br from-zinc-900/50 to-zinc-900/30 p-6">
+          <div className="rounded-xl border border-zinc-800 bg-linear-to-br from-zinc-900/50 to-zinc-900/30 p-6">
             <div className="text-sm font-medium text-zinc-400 mb-2">Total Value</div>
             <div className="text-2xl font-bold">${portfolio.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
           </div>
-          <div className="rounded-xl border border-zinc-800 bg-gradient-to-br from-zinc-900/50 to-zinc-900/30 p-6">
+          <div className="rounded-xl border border-zinc-800 bg-linear-to-br from-zinc-900/50 to-zinc-900/30 p-6">
             <div className="text-sm font-medium text-zinc-400 mb-2">Contributions</div>
             <div className="text-2xl font-bold">{portfolio.totalContributions}</div>
           </div>
-          <div className="rounded-xl border border-zinc-800 bg-gradient-to-br from-zinc-900/50 to-zinc-900/30 p-6">
+          <div className="rounded-xl border border-zinc-800 bg-linear-to-br from-zinc-900/50 to-zinc-900/30 p-6">
             <div className="text-sm font-medium text-zinc-400 mb-2">Rewards Earned</div>
             <div className="text-2xl font-bold">${portfolio.totalRewards.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
           </div>
-          <div className="rounded-xl border border-zinc-800 bg-gradient-to-br from-zinc-900/50 to-zinc-900/30 p-6">
+          <div className="rounded-xl border border-zinc-800 bg-linear-to-br from-zinc-900/50 to-zinc-900/30 p-6">
             <div className="text-sm font-medium text-zinc-400 mb-2">IP Tokens Owned</div>
             <div className="text-2xl font-bold">{portfolio.ipTokensOwned.length}</div>
           </div>
@@ -155,7 +169,7 @@ export default function Dashboard() {
         {activeTab === 'overview' && (
           <div className="space-y-6">
             {/* Recent Contributions */}
-            <div className="rounded-xl border border-zinc-800 bg-gradient-to-br from-zinc-900/50 to-zinc-900/30 p-6">
+            <div className="rounded-xl border border-zinc-800 bg-linear-to-br from-zinc-900/50 to-zinc-900/30 p-6">
               <h2 className="text-xl font-semibold mb-4">Recent Contributions</h2>
               <div className="space-y-4">
                 {portfolio.recentContributions.slice(0, 5).map((contrib) => (
@@ -180,7 +194,7 @@ export default function Dashboard() {
             </div>
 
             {/* Owned IP Tokens */}
-            <div className="rounded-xl border border-zinc-800 bg-gradient-to-br from-zinc-900/50 to-zinc-900/30 p-6">
+            <div className="rounded-xl border border-zinc-800 bg-linear-to-br from-zinc-900/50 to-zinc-900/30 p-6">
               <h2 className="text-xl font-semibold mb-4">Your IP Tokens</h2>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 {portfolio.ipTokensOwned.map((token) => (
@@ -205,7 +219,7 @@ export default function Dashboard() {
         )}
 
         {activeTab === 'contributions' && (
-          <div className="rounded-xl border border-zinc-800 bg-gradient-to-br from-zinc-900/50 to-zinc-900/30 p-6">
+          <div className="rounded-xl border border-zinc-800 bg-linear-to-br from-zinc-900/50 to-zinc-900/30 p-6">
             <h2 className="text-xl font-semibold mb-4">All Contributions</h2>
             <div className="space-y-4">
               {portfolio.recentContributions.map((contrib) => (
@@ -240,7 +254,7 @@ export default function Dashboard() {
         )}
 
         {activeTab === 'portfolio' && (
-          <div className="rounded-xl border border-zinc-800 bg-gradient-to-br from-zinc-900/50 to-zinc-900/30 p-6">
+          <div className="rounded-xl border border-zinc-800 bg-linear-to-br from-zinc-900/50 to-zinc-900/30 p-6">
             <h2 className="text-xl font-semibold mb-4">IP Token Portfolio</h2>
             <div className="space-y-4">
               {portfolio.ipTokensOwned.map((token) => (
@@ -277,3 +291,19 @@ export default function Dashboard() {
   );
 }
 
+export default function Dashboard() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-[#0a0a0f] text-white flex items-center justify-center">
+          <div className="text-center">
+            <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-cyan-500 border-r-transparent"></div>
+            <p className="mt-4 text-zinc-400">Loading your dashboard...</p>
+          </div>
+        </div>
+      }
+    >
+      <DashboardContent />
+    </Suspense>
+  );
+}

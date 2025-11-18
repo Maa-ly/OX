@@ -45,10 +45,12 @@ export const metadata: Metadata = {
     shortcut: "/favicon.svg",
     apple: "/favicon.svg",
   },
-  viewport: {
-    width: "device-width",
-    initialScale: 1,
-  },
+};
+
+// Viewport must be exported separately in Next.js 16+
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
 };
 
 export default function RootLayout({

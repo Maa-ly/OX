@@ -27,7 +27,7 @@ const DEFAULT_PORT = parseInt(process.env.PORT || '3000', 10);
 app.use(helmet());
 app.use(cors(
   {
-    origin: ['http://localhost:3000', process.env.FRONTEND_URL],
+    origin: ['http://localhost:3000', 'http://localhost:3001', process.env.FRONTEND_URL],
     credentials: true,
   }
 ));

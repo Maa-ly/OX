@@ -1,22 +1,31 @@
 "use client";
 
-import { useWallet } from "@suiet/wallet-kit";
-import { useState, useEffect } from "react";
+import { useWalletAuth } from "@/lib/hooks/useWalletAuth";
+import { useZkLogin } from "@/lib/hooks/useZkLogin";
+import { useAuthStore } from "@/lib/stores/auth-store";
+import { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
 import { signContribution, createContribution } from "@/lib/utils/signing";
 import { storeContribution } from "@/lib/utils/walrus";
 import { getIPTokens, type IPToken } from "@/lib/utils/api";
 import { CustomSelect } from "@/components/ui/custom-select";
+import { StarRating } from "@/components/ui/star-rating";
+import { Header } from "@/components/shared/header";
 
 type ContributionType = "rating" | "prediction" | "meme" | "review" | "stake";
 
-export default function Contribute() {
-  const wallet = useWallet();
+function ContributeContent() {
+  const { wallet, isConnected, address: walletAddress } = useWalletAuth();
+  const { address: zkLoginAddress } = useZkLogin();
+  const { isAuthenticated, address } = useAuthStore();
   const [tokens, setTokens] = useState<IPToken[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedType, setSelectedType] = useState<ContributionType>("rating");
   const [selectedToken, setSelectedToken] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
+
+  // Get current address
+  const currentAddress = address || walletAddress || zkLoginAddress;
 
   // Form fields
   const [rating, setRating] = useState<number>(5);
@@ -52,7 +61,7 @@ export default function Contribute() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!wallet.connected || !wallet.account?.address || !selectedToken) return;
+    if (!isConnected || !currentAddress || !selectedToken) return;
 
     setSubmitting(true);
     try {
@@ -63,15 +72,18 @@ export default function Contribute() {
       const contribution = createContribution({
         ip_token_id: selectedToken,
         engagement_type: selectedType,
-        user_wallet: wallet.account.address,
+        user_wallet: currentAddress,
         rating: selectedType === "rating" ? rating : undefined,
         prediction: selectedType === "prediction" ? prediction : undefined,
         review: selectedType === "review" ? review : undefined,
         stake: selectedType === "stake" ? stake : undefined,
       });
 
-      // Sign contribution with wallet
-      const signature = await signContribution(contribution, wallet);
+      // Sign contribution with wallet (if wallet connected, otherwise skip signing for zkLogin)
+      let signature = '';
+      if (wallet.connected && wallet.account) {
+        signature = await signContribution(contribution, wallet);
+      }
 
       // Add signature to contribution
       const signedContribution = {
@@ -105,17 +117,17 @@ export default function Contribute() {
     }
   };
 
-  if (!wallet.connected) {
+  if (!isAuthenticated && !currentAddress) {
     return (
-      <div className="min-h-screen bg-[#0a0a0f] text-white flex items-center justify-center">
+      <div className="min-h-screen bg-[#0a0a0f] text-white overflow-x-hidden flex items-center justify-center">
         <div className="text-center">
-          <h2 className="text-2xl font-bold mb-4">Wallet Not Connected</h2>
+          <h2 className="text-2xl font-bold mb-4">Not Authenticated</h2>
           <p className="text-zinc-400 mb-6">
-            Please connect your wallet to contribute
+            Please connect your wallet or sign in to contribute
           </p>
           <Link
             href="/"
-            className="inline-block rounded-lg bg-linear-to-r from-cyan-500 to-blue-600 px-6 py-3 font-semibold text-white hover:shadow-lg hover:shadow-cyan-500/25 transition-all"
+            className="inline-block rounded-lg bg-gradient-to-r from-cyan-500 to-blue-600 px-6 py-3 font-semibold text-white hover:shadow-lg hover:shadow-cyan-500/25 transition-all"
           >
             Go to Home
           </Link>
@@ -125,37 +137,12 @@ export default function Contribute() {
   }
 
   return (
-    <div className="min-h-screen bg-[#0a0a0f] text-white">
-      {/* Navigation */}
-      <nav className="border-b border-zinc-800/50 bg-[#0a0a0f]/80 backdrop-blur-xl">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="flex h-16 items-center justify-between">
-            <Link href="/" className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-linear-to-br from-cyan-500 to-blue-600">
-                <span className="text-xl font-bold">O</span>
-              </div>
-              <div>
-                <div className="text-lg font-bold tracking-tight">ODX</div>
-                <div className="text-xs text-zinc-400">Otaku Data Exchange</div>
-              </div>
-            </Link>
-            <div className="flex items-center gap-4">
-              <Link
-                href="/dashboard"
-                className="text-sm font-medium text-zinc-300 transition-colors hover:text-white"
-              >
-                Dashboard
-              </Link>
-              <Link
-                href="/marketplace"
-                className="text-sm font-medium text-zinc-300 transition-colors hover:text-white"
-              >
-                Marketplace
-              </Link>
-            </div>
-          </div>
-        </div>
-      </nav>
+    <div className="min-h-screen bg-[#0a0a0f] text-white overflow-x-hidden">
+      <Header 
+        showWallet={true}
+        showDashboard={true}
+        showMarketplace={true}
+      />
 
       <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 py-8">
         {/* Header */}
@@ -228,22 +215,14 @@ export default function Contribute() {
           {/* Rating Form */}
           {selectedType === "rating" && (
             <div className="mb-6">
-              <label className="block text-sm font-medium text-zinc-300 mb-2">
+              <label className="block text-sm font-medium text-zinc-300 mb-4">
                 Rating (1-10)
               </label>
-              <div className="flex items-center gap-4">
-                <input
-                  type="range"
-                  min="1"
-                  max="10"
-                  value={rating}
-                  onChange={(e) => setRating(Number(e.target.value))}
-                  className="flex-1"
-                />
-                <div className="text-2xl font-bold text-cyan-400 w-12 text-center">
-                  {rating}
-                </div>
-              </div>
+              <StarRating
+                value={rating}
+                onChange={setRating}
+                maxStars={10}
+              />
             </div>
           )}
 
@@ -316,5 +295,22 @@ export default function Contribute() {
         </form>
       </div>
     </div>
+  );
+}
+
+export default function Contribute() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-[#0a0a0f] text-white overflow-x-hidden flex items-center justify-center">
+          <div className="text-center">
+            <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-cyan-500 border-r-transparent"></div>
+            <p className="mt-4 text-zinc-400">Loading...</p>
+          </div>
+        </div>
+      }
+    >
+      <ContributeContent />
+    </Suspense>
   );
 }
