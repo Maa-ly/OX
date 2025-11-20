@@ -331,7 +331,7 @@ export class ContractService {
     try {
       // Primary method: Query the TokenRegistry object directly (most reliable)
       logger.info(`Querying TokenRegistry object directly: ${this.tokenRegistryId}`);
-      logger.info(`Using Sui RPC: ${this.client.connection.fullnode}`);
+      logger.info(`Using Sui RPC: ${config.sui.rpcUrl}`);
       try {
         const registryObject = await this.client.getObject({
           id: this.tokenRegistryId,
