@@ -70,9 +70,14 @@ router.get('/tokens', async (req, res, next) => {
   try {
     const { detailed } = req.query;
     
+    logger.info('Fetching tokens, detailed:', detailed);
+    logger.info('TokenRegistry ID:', contractService.tokenRegistryId);
+    logger.info('Package ID:', contractService.packageId);
+    
     if (detailed === 'true' || detailed === '1') {
       // Return full token details
       const tokens = await contractService.getAllTokensWithInfo();
+      logger.info(`Retrieved ${tokens.length} tokens with info`);
       res.json({
         success: true,
         count: tokens.length,
@@ -81,6 +86,7 @@ router.get('/tokens', async (req, res, next) => {
     } else {
       // Return just token IDs
       const tokens = await contractService.getAllTokens();
+      logger.info(`Retrieved ${tokens.length} token IDs`);
       res.json({
         success: true,
         count: tokens.length,
@@ -88,6 +94,7 @@ router.get('/tokens', async (req, res, next) => {
       });
     }
   } catch (error) {
+    logger.error('Error in /tokens endpoint:', error);
     next(error);
   }
 });

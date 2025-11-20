@@ -330,7 +330,8 @@ export class ContractService {
   async getAllTokens() {
     try {
       // Primary method: Query the TokenRegistry object directly (most reliable)
-      logger.info('Querying TokenRegistry object directly...');
+      logger.info(`Querying TokenRegistry object directly: ${this.tokenRegistryId}`);
+      logger.info(`Using Sui RPC: ${this.client.connection.fullnode}`);
       try {
         const registryObject = await this.client.getObject({
           id: this.tokenRegistryId,
@@ -341,12 +342,15 @@ export class ContractService {
           },
         });
 
-        logger.debug('TokenRegistry object type:', registryObject.data?.type);
-        logger.debug('TokenRegistry content type:', registryObject.data?.content?.dataType);
+        logger.info('TokenRegistry object retrieved successfully');
+        logger.info('TokenRegistry object type:', registryObject.data?.type);
+        logger.info('TokenRegistry content type:', registryObject.data?.content?.dataType);
 
         if (registryObject.data?.content?.dataType === 'moveObject') {
           const fields = registryObject.data.content.fields;
-          logger.debug('TokenRegistry fields:', Object.keys(fields));
+          logger.info('TokenRegistry fields:', Object.keys(fields));
+          logger.info('Tokens field type:', typeof fields.tokens);
+          logger.info('Tokens field value (first 200 chars):', JSON.stringify(fields.tokens).substring(0, 200));
           
           // The tokens field is an array of token ID strings
           if (fields.tokens) {
@@ -354,6 +358,7 @@ export class ContractService {
             
             // Handle array of token IDs (most common case)
             if (Array.isArray(fields.tokens)) {
+              logger.info(`Tokens field is an array with ${fields.tokens.length} items`);
               tokenIds = fields.tokens
                 .map(token => {
                   // Token IDs are already strings in format "0x..."
@@ -368,14 +373,18 @@ export class ContractService {
                 })
                 .filter(id => id !== null && id.startsWith('0x'));
               
+              logger.info(`Parsed ${tokenIds.length} valid token IDs from array`);
               if (tokenIds.length > 0) {
                 logger.info(`Successfully retrieved ${tokenIds.length} token ID(s) from TokenRegistry object`);
-                logger.debug(`Token IDs: ${tokenIds.join(', ')}`);
+                logger.info(`Token IDs: ${tokenIds.join(', ')}`);
                 return tokenIds;
+              } else {
+                logger.warn('No valid token IDs found in tokens array');
               }
             } 
             // Try as BCS-encoded string (fallback)
             else if (typeof fields.tokens === 'string') {
+              logger.info('Tokens field is a string, attempting to parse as BCS-encoded');
               try {
                 // Parse BCS-encoded vector<ID>
                 const vectorBytes = Buffer.from(fields.tokens, 'base64');
@@ -409,16 +418,25 @@ export class ContractService {
                 logger.warn('Failed to parse BCS-encoded tokens field:', bcsError);
               }
             }
+          } else {
+            logger.warn('No tokens field found in TokenRegistry object');
           }
           
           // Try using BCS data if available
           if (registryObject.data?.bcs?.dataType === 'moveObject' && registryObject.data?.bcs?.bcsBytes) {
-            logger.debug('Attempting to parse BCS bytes from object...');
+            logger.info('Attempting to parse BCS bytes from object...');
             // This would require more complex BCS parsing
           }
+        } else {
+          logger.warn(`TokenRegistry object is not a moveObject, type: ${registryObject.data?.content?.dataType}`);
         }
       } catch (directError) {
-        logger.warn('Direct object query failed, trying view function:', directError);
+        logger.error('Direct object query failed:', directError);
+        logger.error('Error details:', {
+          message: directError.message,
+          stack: directError.stack,
+          tokenRegistryId: this.tokenRegistryId,
+        });
       }
 
       // Fallback method: Use devInspectTransactionBlock to call the view function
