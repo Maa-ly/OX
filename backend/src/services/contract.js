@@ -349,11 +349,13 @@ export class ContractService {
         if (registryObject.data?.content?.dataType === 'moveObject') {
           const fields = registryObject.data.content.fields;
           logger.info('TokenRegistry fields:', Object.keys(fields));
+          logger.info('All field keys:', JSON.stringify(Object.keys(fields)));
+          logger.info('Tokens field exists:', 'tokens' in fields);
           logger.info('Tokens field type:', typeof fields.tokens);
-          logger.info('Tokens field value (first 200 chars):', JSON.stringify(fields.tokens).substring(0, 200));
+          logger.info('Tokens field value (full):', JSON.stringify(fields.tokens));
           
           // The tokens field is an array of token ID strings
-          if (fields.tokens) {
+          if (fields.tokens !== undefined && fields.tokens !== null) {
             let tokenIds = [];
             
             // Handle array of token IDs (most common case)
@@ -379,7 +381,8 @@ export class ContractService {
                 logger.info(`Token IDs: ${tokenIds.join(', ')}`);
                 return tokenIds;
               } else {
-                logger.warn('No valid token IDs found in tokens array');
+                logger.warn(`No valid token IDs found in tokens array. Array length: ${fields.tokens.length}, items: ${JSON.stringify(fields.tokens)}`);
+                // Continue to try view function as fallback
               }
             } 
             // Try as BCS-encoded string (fallback)
@@ -419,7 +422,7 @@ export class ContractService {
               }
             }
           } else {
-            logger.warn('No tokens field found in TokenRegistry object');
+            logger.warn('No tokens field found in TokenRegistry object. Available fields:', Object.keys(fields));
           }
           
           // Try using BCS data if available
@@ -429,6 +432,7 @@ export class ContractService {
           }
         } else {
           logger.warn(`TokenRegistry object is not a moveObject, type: ${registryObject.data?.content?.dataType}`);
+          logger.warn('Full object structure:', JSON.stringify(registryObject.data, null, 2).substring(0, 500));
         }
       } catch (directError) {
         logger.error('Direct object query failed:', directError);
@@ -440,7 +444,8 @@ export class ContractService {
       }
 
       // Fallback method: Use devInspectTransactionBlock to call the view function
-      logger.info('Trying view function method...');
+      // Always try this as shared objects might not expose all data via direct query
+      logger.info('Trying view function method as fallback...');
       try {
         const tx = new Transaction();
         

@@ -516,5 +516,32 @@ router.get('/objects/:objectId', async (req, res, next) => {
   }
 });
 
+/**
+ * Debug endpoint: Get raw TokenRegistry object
+ * GET /contract/debug/registry
+ */
+router.get('/debug/registry', async (req, res, next) => {
+  try {
+    const registryObject = await contractService.client.getObject({
+      id: contractService.tokenRegistryId,
+      options: {
+        showContent: true,
+        showType: true,
+        showBcs: true,
+        showOwner: true,
+      },
+    });
+
+    res.json({
+      success: true,
+      tokenRegistryId: contractService.tokenRegistryId,
+      registryObject,
+    });
+  } catch (error) {
+    logger.error('Error in /debug/registry endpoint:', error);
+    next(error);
+  }
+});
+
 export default router;
 
