@@ -310,3 +310,219 @@ export async function storeBlob(
   return response.json();
 }
 
+/**
+ * Post interface for Discover page
+ */
+export interface Post {
+  id: string;
+  blobId: string;
+  author: string;
+  authorAddress: string;
+  content: string;
+  mediaType: "image" | "video" | "text";
+  mediaUrl?: string;
+  mediaBlobId?: string; // Walrus blob ID for media
+  ipTokenIds: string[]; // Array of IP token IDs this post is about
+  likes: number;
+  comments: number;
+  timestamp: number | string; // Can be number (Unix timestamp) or string (formatted)
+  tags: string[];
+}
+
+export interface StoredPost {
+  success: boolean;
+  post: Post;
+  blobId: string;
+}
+
+/**
+ * Upload media file to Walrus
+ * 
+ * @param file - File object to upload
+ * @returns Promise with blob ID
+ */
+export async function uploadMediaToWalrus(file: File): Promise<{ blobId: string; size: number }> {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await fetch(`${API_BASE_URL}/api/posts/upload-media`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+    throw new Error(error.error || `Failed to upload media: ${response.statusText}`);
+  }
+
+  const result = await response.json();
+  return {
+    blobId: result.blobId,
+    size: result.size,
+  };
+}
+
+/**
+ * Store a post on Walrus via backend API
+ * 
+ * Posts are stored as JSON objects on Walrus with the following structure:
+ * - content: text content
+ * - mediaType: "image" | "video" | "text"
+ * - mediaBlobId: Walrus blob ID for media (if applicable)
+ * - ipTokenIds: array of IP token IDs
+ * - author: author name/address
+ * - authorAddress: wallet address
+ * - timestamp: Unix timestamp
+ * 
+ * @param post - Post object to store
+ * @param mediaFile - Optional file to upload to Walrus
+ * @returns Promise with stored post including blob ID
+ */
+export async function storePost(
+  post: Omit<Post, 'id' | 'blobId' | 'likes' | 'comments'>,
+  mediaFile?: File
+): Promise<StoredPost> {
+  // First, upload media file to Walrus if provided
+  let mediaBlobId: string | undefined;
+  let mediaUrl: string | undefined;
+
+  if (mediaFile) {
+    try {
+      const uploadResult = await uploadMediaToWalrus(mediaFile);
+      mediaBlobId = uploadResult.blobId;
+      // For now, we'll still store a preview URL. In production, you'd read from Walrus
+      // For display, we can use the blob ID to fetch from Walrus
+      mediaUrl = `${API_BASE_URL}/api/walrus/read/${mediaBlobId}`;
+    } catch (error) {
+      console.error('Failed to upload media to Walrus:', error);
+      throw error;
+    }
+  } else if (post.mediaUrl) {
+    // If mediaUrl is provided but no file, use it as-is
+    mediaUrl = post.mediaUrl;
+  }
+
+  // Create post object for storage
+  const postData = {
+    content: post.content,
+    mediaType: post.mediaType,
+    mediaUrl: mediaUrl,
+    mediaBlobId: mediaBlobId,
+    ipTokenIds: post.ipTokenIds,
+    author: post.author,
+    authorAddress: post.authorAddress,
+    timestamp: post.timestamp || Date.now(),
+    tags: post.tags || [],
+  };
+
+  // Store post on Walrus via backend posts API
+  const response = await fetch(`${API_BASE_URL}/api/posts`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(postData),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+    throw new Error(error.error || `Failed to store post: ${response.statusText}`);
+  }
+
+  const result = await response.json();
+  return result;
+}
+
+/**
+ * Get all posts from Walrus
+ * 
+ * @param options - Query options
+ * @returns Promise with posts array
+ */
+export async function getPosts(options?: {
+  ipTokenId?: string;
+  mediaType?: 'image' | 'video' | 'text';
+  limit?: number;
+  offset?: number;
+}): Promise<{ posts: Post[]; total: number }> {
+  try {
+    const params = new URLSearchParams();
+    if (options?.ipTokenId) params.append('ipTokenId', options.ipTokenId);
+    if (options?.mediaType) params.append('mediaType', options.mediaType);
+    if (options?.limit) params.append('limit', options.limit.toString());
+    if (options?.offset) params.append('offset', options.offset.toString());
+
+    const url = `${API_BASE_URL}/api/posts${params.toString() ? `?${params.toString()}` : ''}`;
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(error.error || `Failed to fetch posts: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return {
+      posts: data.posts || [],
+      total: data.total || 0,
+    };
+  } catch (error) {
+    console.error('Failed to fetch posts:', error);
+    return { posts: [], total: 0 };
+  }
+}
+
+/**
+ * Like or unlike a post
+ * 
+ * @param blobId - Post blob ID
+ * @param userAddress - User wallet address
+ * @returns Promise with like status
+ */
+export async function likePost(blobId: string, userAddress: string): Promise<{ liked: boolean; likes: number }> {
+  const response = await fetch(`${API_BASE_URL}/api/posts/${blobId}/like`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ userAddress }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+    throw new Error(error.error || `Failed to like post: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Add a comment to a post
+ * 
+ * @param blobId - Post blob ID
+ * @param userAddress - User wallet address
+ * @param content - Comment content
+ * @param author - Optional author name
+ * @returns Promise with comment data
+ */
+export async function commentOnPost(
+  blobId: string,
+  userAddress: string,
+  content: string,
+  author?: string
+): Promise<{ comment: any; comments: number }> {
+  const response = await fetch(`${API_BASE_URL}/api/posts/${blobId}/comment`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ userAddress, content, author }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+    throw new Error(error.error || `Failed to comment on post: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+

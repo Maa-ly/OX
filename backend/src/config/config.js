@@ -19,6 +19,12 @@ export const config = {
   walrus: {
     configPath: process.env.WALRUS_CONFIG_PATH || '~/.config/walrus/client_config.yaml',
     context: process.env.WALRUS_CONTEXT || 'testnet',
+    // HTTP API URLs (preferred method for serverless)
+    // Reference: https://docs.wal.app/usage/web-api.html
+    aggregatorUrl: process.env.WALRUS_AGGREGATOR_URL || process.env.AGGREGATOR || 'https://aggregator.walrus-testnet.walrus.space',
+    publisherUrl: process.env.WALRUS_PUBLISHER_URL || process.env.PUBLISHER || 'https://publisher.walrus-testnet.walrus.space',
+    // Fallback to CLI if HTTP API not available
+    useHttpApi: process.env.WALRUS_USE_HTTP_API !== 'false', // Default to true
   },
 
   // Nautilus Configuration

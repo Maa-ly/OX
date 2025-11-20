@@ -38,12 +38,28 @@ router.post('/store', async (req, res, next) => {
 router.get('/read/:blobId', async (req, res, next) => {
   try {
     const { blobId } = req.params;
+    const { format } = req.query; // Optional: 'json' (base64) or 'raw' (binary)
 
     logger.info(`Reading blob: ${blobId}`);
 
     const data = await walrusService.readBlob(blobId);
 
-    // Return as base64 or raw depending on content type
+    // If format is 'raw', return binary data directly (for images/videos)
+    if (format === 'raw') {
+      // Determine content type from blob or default
+      const contentType = req.headers.accept?.includes('image/') 
+        ? 'image/jpeg' 
+        : req.headers.accept?.includes('video/')
+        ? 'video/mp4'
+        : 'application/octet-stream';
+      
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Content-Length', data.length);
+      res.setHeader('Cache-Control', 'public, max-age=31536000'); // Cache for 1 year
+      return res.send(data);
+    }
+
+    // Default: Return as base64 JSON
     const base64 = data.toString('base64');
     
     res.json({
