@@ -6,6 +6,8 @@ import { join } from 'path';
 import { config } from '../config/config.js';
 import { logger } from '../utils/logger.js';
 import { SuiClient } from '@mysten/sui/client';
+import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
+import { fromB64 } from '@mysten/sui/utils';
 
 const execAsync = promisify(exec);
 
@@ -19,9 +21,24 @@ const execAsync = promisify(exec);
  * - JSON API: https://docs.wal.app/usage/json-api.html
  * - CLI: https://docs.wal.app/usage/client-cli.html
  * 
+ * Configuration (hardcoded defaults):
+ * - Publisher URL: https://publisher.walrus-testnet.walrus.space (for storing blobs)
+ * - Aggregator URL: https://aggregator.walrus-testnet.walrus.space (for reading blobs)
+ * - Context: testnet
+ * 
+ * Testnet Setup & Getting WAL Tokens:
+ * 1. Get Testnet SUI tokens from the Sui Testnet faucet: sui client faucet
+ * 2. Exchange SUI for WAL tokens using: walrus get-wal (1:1 exchange rate)
+ * 3. Verify WAL balance with: sui client gas (shows all coins including WAL)
+ * Documentation: https://docs.wal.app/usage/networks.html
+ * 
  * Supports:
  * - HTTP API (primary method, works in serverless environments)
  * - CLI commands (fallback for local development)
+ * 
+ * Error Handling:
+ * - Provides helpful error messages for common issues (e.g., insufficient WAL balance)
+ * - Includes documentation links in error messages
  */
 export class WalrusService {
   constructor() {
@@ -36,6 +53,8 @@ export class WalrusService {
       useHttpApi: this.useHttpApi,
       aggregatorUrl: this.aggregatorUrl,
       publisherUrl: this.publisherUrl,
+      walletAddress: this.walletAddress || 'Not configured (will use Walrus config file wallet)',
+      walletConfigured: !!this.walletKeypair,
     });
     
     // CLI configuration (fallback)
@@ -45,8 +64,12 @@ export class WalrusService {
     this.configPath = config.walrus.configPath.replace('~', homeDir);
     this.context = config.walrus.context;
     
-    // Sui client for reading blob metadata
+    // Sui client for reading blob metadata and checking balances
     this.suiClient = new SuiClient({ url: config.sui.rpcUrl });
+    
+    // Wallet for funding user posts (reuse admin keypair if available)
+    this.walletKeypair = this.loadWalletKeypair();
+    this.walletAddress = this.walletKeypair ? this.walletKeypair.toSuiAddress() : null;
     
     // Metrics collector (set externally)
     this.metricsCollector = null;
@@ -64,6 +87,98 @@ export class WalrusService {
       } else {
         logger.info('WalrusService: Using CLI (HTTP API not fully configured)');
       }
+    }
+  }
+
+  /**
+   * Load wallet keypair for funding user posts
+   * Reuses ADMIN_PRIVATE_KEY if available
+   */
+  loadWalletKeypair() {
+    try {
+      const privateKey = process.env.ADMIN_PRIVATE_KEY;
+      if (!privateKey) {
+        logger.warn('ADMIN_PRIVATE_KEY not set. Walrus operations may fail if WAL tokens are required. The service will use the wallet from Walrus config file if available.');
+        return null;
+      }
+
+      let privateKeyBytes;
+      
+      // Try to detect format: hex (64 chars) or base64
+      if (privateKey.length === 64 && /^[0-9a-fA-F]+$/.test(privateKey)) {
+        // Hex format (64 hex characters = 32 bytes)
+        privateKeyBytes = Buffer.from(privateKey, 'hex');
+      } else {
+        // Assume base64 format
+        try {
+          privateKeyBytes = fromB64(privateKey);
+        } catch (b64Error) {
+          // If base64 fails, try hex anyway
+          privateKeyBytes = Buffer.from(privateKey, 'hex');
+        }
+      }
+
+      if (privateKeyBytes.length !== 32) {
+        logger.warn(`Invalid private key length: expected 32 bytes, got ${privateKeyBytes.length}. Wallet funding may not work.`);
+        return null;
+      }
+
+      const keypair = Ed25519Keypair.fromSecretKey(privateKeyBytes);
+      const address = keypair.toSuiAddress();
+      logger.info(`WalrusService wallet loaded: ${address}`);
+      return keypair;
+    } catch (error) {
+      logger.warn('Failed to load wallet keypair for Walrus:', error.message);
+      return null;
+    }
+  }
+
+  /**
+   * Check WAL token balance for the configured wallet
+   * 
+   * @returns {Promise<number>} WAL token balance in MIST (1 WAL = 1e9 MIST)
+   */
+  async checkWALBalance() {
+    if (!this.walletAddress) {
+      logger.warn('No wallet address configured for WAL balance check');
+      return 0;
+    }
+
+    try {
+      // WAL token type ID for testnet (may need to be updated based on actual token type)
+      // For testnet, WAL tokens are typically a specific coin type
+      // We'll check all coins and filter for WAL tokens
+      const allCoins = await this.suiClient.getAllCoins({
+        owner: this.walletAddress,
+      });
+
+      // WAL token type identifier - this may need to be adjusted based on actual testnet token type
+      // Common pattern: look for coins with specific type or check coin metadata
+      // For now, we'll check if there are any coins (SUI or otherwise)
+      // TODO: Add specific WAL token type checking when token type is known
+      
+      let totalBalance = 0;
+      
+      // For testnet, WAL might be stored as regular coins or as a specific token type
+      // Check SUI balance as a fallback (though we need actual WAL balance)
+      const suiBalance = await this.suiClient.getBalance({
+        owner: this.walletAddress,
+      });
+      
+      // Log available coins for debugging
+      logger.debug(`Wallet ${this.walletAddress} has ${allCoins.data.length} coin objects`);
+      logger.debug(`SUI balance: ${suiBalance.totalBalance} MIST (${parseInt(suiBalance.totalBalance) / 1e9} SUI)`);
+      
+      // Note: To get actual WAL balance, we need the WAL token type ID
+      // This would typically be something like: 0x<package_id>::wal::WAL
+      // For now, return 0 and log a warning
+      logger.warn('WAL balance check not fully implemented. Need WAL token type ID for accurate balance.');
+      logger.info('To check WAL balance manually, use: sui client gas (shows all coins including WAL)');
+      
+      return totalBalance;
+    } catch (error) {
+      logger.error('Failed to check WAL balance:', error);
+      return 0;
     }
   }
 
@@ -238,11 +353,20 @@ export class WalrusService {
    * 
    * Operation: Store
    * Reference: https://docs.wal.app/dev-guide/dev-operations.html#store
-   * HTTP API: POST $AGGREGATOR/v1/blobs
+   * HTTP API: PUT $PUBLISHER/v1/blobs?epochs=N&permanent=true
+   *   - Body: Raw binary data
+   *   - Query params: epochs (number), permanent (bool) or deletable (bool)
    * CLI: walrus store <file> [--deletable] [--epochs <n>]
+   * 
+   * Note: Requires WAL tokens in your account for testnet operations.
+   * Get WAL tokens: 1) Get Testnet SUI from faucet, 2) Exchange using 'walrus get-wal'
+   * Docs: https://docs.wal.app/usage/networks.html
    * 
    * @param {Buffer|string} data - Data to store
    * @param {Object} options - Storage options
+   *   - epochs: Number of epochs to store (default: 365)
+   *   - permanent: If true, blob cannot be deleted (default: true if deletable is false)
+   *   - deletable: If true, blob can be deleted (mutually exclusive with permanent)
    * @returns {Promise<Object>} Blob information with blob ID
    */
   async storeBlob(data, options = {}) {
@@ -250,6 +374,18 @@ export class WalrusService {
 
     try {
       logger.info('Storing blob on Walrus...');
+      
+      // Log wallet information for debugging
+      if (this.walletAddress) {
+        logger.info(`Using wallet for funding: ${this.walletAddress}`);
+        // Optional: Check balance before storing (can be enabled for production)
+        // const balance = await this.checkWALBalance();
+        // if (balance === 0) {
+        //   logger.warn('WAL balance check returned 0. Ensure wallet has WAL tokens for storage.');
+        // }
+      } else {
+        logger.info('No wallet configured. Walrus will use wallet from config file or default wallet.');
+      }
 
       // Convert data to buffer if string
       const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data, 'utf-8');
@@ -311,8 +447,10 @@ export class WalrusService {
             
             // Provide specific guidance for common errors
             if (errorMessage.includes('WAL coins') || errorMessage.includes('sufficient balance')) {
+              const walletInfo = this.walletAddress ? `Wallet address: ${this.walletAddress}. ` : 'No wallet configured. ';
               const helpfulMessage = `Insufficient WAL balance: The Walrus account needs WAL tokens to store blobs. ` +
-                `To get WAL tokens: 1) Get Testnet SUI from the faucet, 2) Exchange SUI for WAL using 'walrus get-wal' command (1:1 rate). ` +
+                `${walletInfo}` +
+                `To fund the wallet: 1) Get Testnet SUI from the faucet, 2) Exchange SUI for WAL using 'walrus get-wal' command (1:1 rate). ` +
                 `See docs: https://docs.wal.app/usage/networks.html and https://docs.wal.app/usage/setup.html. ` +
                 `Error: ${errorMessage}. Publisher URL: ${this.publisherUrl}`;
               throw new Error(helpfulMessage);

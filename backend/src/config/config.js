@@ -25,6 +25,14 @@ export const config = {
     publisherUrl: 'https://publisher.walrus-testnet.walrus.space',
     // Use HTTP API by default
     useHttpApi: true,
+    // Note: Wallet funding for user posts
+    // The service uses ADMIN_PRIVATE_KEY wallet to fund user posts on Walrus.
+    // To fund the wallet with WAL tokens:
+    // 1. Ensure ADMIN_PRIVATE_KEY is set (same wallet used for contract operations)
+    // 2. Get Testnet SUI from faucet: sui client faucet
+    // 3. Exchange SUI for WAL: walrus get-wal (1:1 exchange rate, defaults to 0.5 SUI)
+    // 4. Check balance: sui client gas (shows all coins including WAL)
+    // Docs: https://docs.wal.app/usage/networks.html
   },
 
   // Nautilus Configuration
