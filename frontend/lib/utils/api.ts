@@ -3,12 +3,23 @@
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000';
 
+// Log API base URL in development (helps debug environment variable issues)
+if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
+  console.log('API Base URL:', API_BASE);
+}
+
 // Helper function to make API calls
 async function apiCall<T = any>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<T> {
   const url = `${API_BASE}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+  
+  // Log API calls in development
+  if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
+    console.log('API Call:', url);
+  }
+  
   const response = await fetch(url, {
     ...options,
     headers: {

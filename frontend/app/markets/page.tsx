@@ -45,6 +45,10 @@ export default function MarketsPage() {
     setLoading(true);
     setError(null);
     try {
+      // Log API base URL for debugging
+      const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000';
+      console.log('API Base URL:', apiBase);
+      
       // Fetch tokens with detailed info
       const tokens = await getIPTokens(true);
       
@@ -135,91 +139,21 @@ export default function MarketsPage() {
       const filteredMarkets = marketsData.filter(m => m !== null && m !== undefined);
       console.log('Final markets data:', filteredMarkets);
       setMarkets(filteredMarkets);
+      
+      if (filteredMarkets.length === 0) {
+        setError('No tokens found. Make sure the backend API is accessible and tokens are deployed.');
+      }
     } catch (err) {
       console.error('Failed to load markets:', err);
-      setError(err instanceof Error ? err.message : 'Failed to load markets');
+      const errorMessage = err instanceof Error ? err.message : 'Failed to load markets';
+      const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000';
+      setError(`${errorMessage}. API URL: ${apiBase}. Please check your environment variables.`);
     } finally {
       setLoading(false);
     }
   };
 
-  // Mock market data (fallback - removed, using real data now)
-  const mockMarkets: TokenMarket[] = [
-    {
-      id: "1",
-      symbol: "NARUTO",
-      name: "Naruto",
-      price: 37.706,
-      change24h: -0.66,
-      volume24h: 103951486,
-      marketCap: 12714962997,
-    },
-    {
-      id: "2",
-      symbol: "ONEPIECE",
-      name: "One Piece",
-      price: 52.34,
-      change24h: 3.21,
-      volume24h: 156234567,
-      marketCap: 18923456789,
-    },
-    {
-      id: "3",
-      symbol: "DEMONSLAYER",
-      name: "Demon Slayer",
-      price: 28.92,
-      change24h: -1.45,
-      volume24h: 89456123,
-      marketCap: 8456789012,
-    },
-    {
-      id: "4",
-      symbol: "AOT",
-      name: "Attack on Titan",
-      price: 41.18,
-      change24h: 5.67,
-      volume24h: 123456789,
-      marketCap: 14567890123,
-    },
-    {
-      id: "5",
-      symbol: "MHA",
-      name: "My Hero Academia",
-      price: 19.87,
-      change24h: 2.34,
-      volume24h: 67891234,
-      marketCap: 6789012345,
-    },
-    {
-      id: "6",
-      symbol: "JUJUTSU",
-      name: "Jujutsu Kaisen",
-      price: 33.45,
-      change24h: 4.12,
-      volume24h: 98765432,
-      marketCap: 11234567890,
-    },
-    {
-      id: "7",
-      symbol: "CHAINSAWMAN",
-      name: "Chainsaw Man",
-      price: 24.76,
-      change24h: -2.11,
-      volume24h: 54321098,
-      marketCap: 7890123456,
-    },
-    {
-      id: "8",
-      symbol: "SPY",
-      name: "Spy x Family",
-      price: 31.22,
-      change24h: 1.89,
-      volume24h: 76543210,
-      marketCap: 9876543210,
-    },
-  ];
-
-  const filteredMarkets = (markets.length > 0 ? markets : mockMarkets)
+  const filteredMarkets = markets
     .filter(
       (m) =>
         m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
