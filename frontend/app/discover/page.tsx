@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, Suspense } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import Image from "next/image";
@@ -19,7 +19,7 @@ const NavWalletButton = dynamic(
   { ssr: false }
 );
 
-export default function DiscoverPage() {
+function DiscoverPageContent() {
   const { wallet, isConnected, address: walletAddress } = useWalletAuth();
   const { address: zkLoginAddress } = useZkLogin();
   const { isAuthenticated, address } = useAuthStore();
@@ -759,5 +759,20 @@ export default function DiscoverPage() {
       />
       <MobileBottomNav />
     </div>
+  );
+}
+
+export default function DiscoverPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-[#0a0a0f] text-white flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-cyan-500 mx-auto mb-4"></div>
+          <p className="text-zinc-400">Loading...</p>
+        </div>
+      </div>
+    }>
+      <DiscoverPageContent />
+    </Suspense>
   );
 }
