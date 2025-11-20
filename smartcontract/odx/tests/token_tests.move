@@ -41,7 +41,7 @@ fun test_create_ip_token() {
         let reserve_pool_size = 50000;
         
         test_scenario::next_tx(&mut scenario, ADMIN);
-        let token_id = token::create_ip_token(
+        token::create_ip_token(
             &admin_cap,
             &mut registry,
             name,
@@ -51,6 +51,10 @@ fun test_create_ip_token() {
             reserve_pool_size,
             test_scenario::ctx(&mut scenario),
         );
+        
+        // Get token ID from registry (last token added)
+        let token_count = token::get_token_count(&registry);
+        let token_id = token::get_token_at(&registry, token_count - 1);
         
         // Verify token was created and transferred to admin
         test_scenario::next_tx(&mut scenario, ADMIN);
@@ -129,7 +133,7 @@ fun test_update_reserve_pool() {
         
         // Create a token
         test_scenario::next_tx(&mut scenario, ADMIN);
-        let token_id = token::create_ip_token(
+        token::create_ip_token(
             &admin_cap,
             &mut registry,
             b"Test Token",
@@ -139,6 +143,10 @@ fun test_update_reserve_pool() {
             50000,
             test_scenario::ctx(&mut scenario),
         );
+        
+        // Get token ID from registry (last token added)
+        let token_count = token::get_token_count(&registry);
+        let token_id = token::get_token_at(&registry, token_count - 1);
         
         test_scenario::next_tx(&mut scenario, ADMIN);
         let mut token = test_scenario::take_from_sender_by_id<odx::datatypes::IPToken>(&scenario, token_id);
@@ -176,7 +184,7 @@ fun test_release_from_reserve() {
         // Create a token with reserve
         let reserve_pool_size = 50000;
         test_scenario::next_tx(&mut scenario, ADMIN);
-        let token_id = token::create_ip_token(
+        token::create_ip_token(
             &admin_cap,
             &mut registry,
             b"Test Token",
@@ -186,6 +194,10 @@ fun test_release_from_reserve() {
             reserve_pool_size,
             test_scenario::ctx(&mut scenario),
         );
+        
+        // Get token ID from registry (last token added)
+        let token_count = token::get_token_count(&registry);
+        let token_id = token::get_token_at(&registry, token_count - 1);
         
         test_scenario::next_tx(&mut scenario, ADMIN);
         let mut token = test_scenario::take_from_sender_by_id<odx::datatypes::IPToken>(&scenario, token_id);
@@ -224,7 +236,7 @@ fun test_get_all_tokens() {
         
         // Create multiple tokens
         test_scenario::next_tx(&mut scenario, ADMIN);
-        let token_id_1 = token::create_ip_token(
+        token::create_ip_token(
             &admin_cap,
             &mut registry,
             b"Token 1",
@@ -235,11 +247,15 @@ fun test_get_all_tokens() {
             test_scenario::ctx(&mut scenario),
         );
         
+        // Get token ID from registry (last token added)
+        let token_count_1 = token::get_token_count(&registry);
+        let token_id_1 = token::get_token_at(&registry, token_count_1 - 1);
+        
         test_scenario::next_tx(&mut scenario, ADMIN);
         let token_1 = test_scenario::take_from_sender_by_id<odx::datatypes::IPToken>(&scenario, token_id_1);
         
         test_scenario::next_tx(&mut scenario, ADMIN);
-        let token_id_2 = token::create_ip_token(
+        token::create_ip_token(
             &admin_cap,
             &mut registry,
             b"Token 2",
@@ -249,6 +265,10 @@ fun test_get_all_tokens() {
             60000,
             test_scenario::ctx(&mut scenario),
         );
+        
+        // Get token ID from registry (last token added)
+        let token_count_2 = token::get_token_count(&registry);
+        let token_id_2 = token::get_token_at(&registry, token_count_2 - 1);
         
         test_scenario::next_tx(&mut scenario, ADMIN);
         let token_2 = test_scenario::take_from_sender_by_id<odx::datatypes::IPToken>(&scenario, token_id_2);

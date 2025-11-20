@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import Image from "next/image";
 import { CustomSelect } from "@/components/ui/custom-select";
 import { MobileBottomNav, MobileSidebar } from "@/components/mobile-nav";
+import { getIPTokens, contractAPI } from "@/lib/utils/api";
 
 const NavWalletButton = dynamic(
   () =>
@@ -32,9 +33,118 @@ export default function MarketsPage() {
     "marketCap" | "volume" | "price" | "change"
   >("marketCap");
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [markets, setMarkets] = useState<TokenMarket[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // Mock market data
-  const markets: TokenMarket[] = [
+  useEffect(() => {
+    loadMarkets();
+  }, []);
+
+  const loadMarkets = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      // Fetch tokens with detailed info
+      const tokens = await getIPTokens(true);
+      
+      console.log('Fetched tokens:', tokens);
+      
+      // Filter out tokens with errors and ensure we have valid data
+      const validTokens = tokens.filter(token => {
+        // Check if token has an error field (from backend)
+        if ((token as any).error) {
+          console.warn(`Token ${token.id} has error:`, (token as any).error);
+          return false;
+        }
+        // Ensure we have at least an ID
+        return token.id && token.id.startsWith('0x');
+      });
+      
+      console.log('Valid tokens:', validTokens.length);
+      
+      // Fetch prices and metrics for each token
+      const marketsData = await Promise.all(
+        validTokens.map(async (token) => {
+          try {
+            // Fetch price from oracle
+            let price = 0;
+            try {
+              const priceData = await contractAPI.getPrice(token.id);
+              console.log(`Price data for ${token.id}:`, priceData);
+              if (priceData?.price !== null && priceData?.price !== undefined) {
+                const rawPrice = Number(priceData.price);
+                // Price is returned in MIST (1e9 MIST = 1 SUI), always convert to SUI
+                // MIST values are typically very large (e.g., 16905572749700243000)
+                if (rawPrice > 0) {
+                  // Convert from MIST to SUI by dividing by 1e9
+                  price = rawPrice / 1000000000; // 1e9
+                  console.log(`Price conversion: ${rawPrice} MIST / 1e9 = ${price} SUI`);
+                  
+                  // If price seems unreasonably high (> 1M SUI), it might be an error
+                  if (price > 1000000) {
+                    console.warn(`Price seems very high: ${price} SUI for token ${token.id}`);
+                  }
+                }
+              }
+            } catch (priceError) {
+              console.warn(`Failed to fetch price for token ${token.id}:`, priceError);
+            }
+
+            // Calculate market cap (price * circulating supply)
+            const circulatingSupply = token.circulatingSupply || 0;
+            const marketCap = price * circulatingSupply;
+
+            // Default values for missing data
+            const change24h = token.priceChange24h || 0;
+            const volume24h = 0; // TODO: Fetch from marketplace when available
+
+            const market: TokenMarket = {
+              id: token.id,
+              symbol: (token.symbol && token.symbol !== 'UNK' && !token.symbol.includes('?')) 
+                ? token.symbol 
+                : `TOKEN-${token.id.slice(2, 6).toUpperCase()}`,
+              name: (token.name && token.name !== 'Unknown' && !token.name.includes('?')) 
+                ? token.name 
+                : `Token ${token.id.slice(2, 10)}`,
+              price: price,
+              change24h: change24h,
+              volume24h: volume24h,
+              marketCap: marketCap,
+            };
+            
+            console.log(`Market data for ${token.id}:`, market);
+            return market;
+          } catch (err) {
+            console.error(`Error loading data for token ${token.id}:`, err);
+            // Return token with default values if price fetch fails
+            return {
+              id: token.id,
+              symbol: `TOKEN-${token.id.slice(2, 6).toUpperCase()}`,
+              name: `Token ${token.id.slice(2, 10)}`,
+              price: 0,
+              change24h: 0,
+              volume24h: 0,
+              marketCap: 0,
+            } as TokenMarket;
+          }
+        })
+      );
+
+      // Filter out any null/undefined entries
+      const filteredMarkets = marketsData.filter(m => m !== null && m !== undefined);
+      console.log('Final markets data:', filteredMarkets);
+      setMarkets(filteredMarkets);
+    } catch (err) {
+      console.error('Failed to load markets:', err);
+      setError(err instanceof Error ? err.message : 'Failed to load markets');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Mock market data (fallback - removed, using real data now)
+  const mockMarkets: TokenMarket[] = [
     {
       id: "1",
       symbol: "NARUTO",
@@ -109,7 +219,7 @@ export default function MarketsPage() {
     },
   ];
 
-  const filteredMarkets = markets
+  const filteredMarkets = (markets.length > 0 ? markets : mockMarkets)
     .filter(
       (m) =>
         m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -265,21 +375,43 @@ export default function MarketsPage() {
         </div>
 
         {/* Market Table */}
-        <div className="bg-zinc-900/50 border border-zinc-800 rounded-lg overflow-x-auto">
-          <table className="w-full min-w-[800px]">
-            <thead className="bg-zinc-900 border-b border-zinc-800">
-              <tr className="text-left text-sm text-zinc-400">
-                <th className="py-4 px-6 sticky left-0 bg-zinc-900 z-10">#</th>
-                <th className="py-4 px-6 sticky left-12 bg-zinc-900 z-10">Name</th>
-                <th className="py-4 px-6 text-right">Price</th>
-                <th className="py-4 px-6 text-right">24h Change</th>
-                <th className="py-4 px-6 text-right">24h Volume</th>
-                <th className="py-4 px-6 text-right">Market Cap</th>
-                <th className="py-4 px-6 text-center">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredMarkets.map((market, index) => (
+        {loading ? (
+          <div className="flex items-center justify-center py-20">
+            <div className="text-center">
+              <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-cyan-500 border-r-transparent"></div>
+              <p className="mt-4 text-zinc-400">Loading markets...</p>
+            </div>
+          </div>
+        ) : error ? (
+          <div className="bg-red-900/20 border border-red-500/50 rounded-lg p-6 text-center">
+            <p className="text-red-400 mb-4">{error}</p>
+            <button
+              onClick={loadMarkets}
+              className="px-4 py-2 bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30 rounded-lg text-sm font-medium transition-colors"
+            >
+              Retry
+            </button>
+          </div>
+        ) : filteredMarkets.length === 0 ? (
+          <div className="bg-zinc-900/50 border border-zinc-800 rounded-lg p-12 text-center">
+            <p className="text-zinc-400">No tokens found</p>
+          </div>
+        ) : (
+          <div className="bg-zinc-900/50 border border-zinc-800 rounded-lg overflow-x-auto">
+            <table className="w-full min-w-[800px]">
+              <thead className="bg-zinc-900 border-b border-zinc-800">
+                <tr className="text-left text-sm text-zinc-400">
+                  <th className="py-4 px-6 sticky left-0 bg-zinc-900 z-10">#</th>
+                  <th className="py-4 px-6 sticky left-12 bg-zinc-900 z-10">Name</th>
+                  <th className="py-4 px-6 text-right">Price</th>
+                  <th className="py-4 px-6 text-right">24h Change</th>
+                  <th className="py-4 px-6 text-right">24h Volume</th>
+                  <th className="py-4 px-6 text-right">Market Cap</th>
+                  <th className="py-4 px-6 text-center">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredMarkets.map((market, index) => (
                 <tr
                   key={market.id}
                   className="border-b border-zinc-800/50 hover:bg-zinc-800/30 transition-colors"
@@ -299,7 +431,13 @@ export default function MarketsPage() {
                     </div>
                   </td>
                   <td className="py-4 px-6 text-right font-semibold">
-                    ${market.price.toFixed(3)}
+                    {market.price > 0 
+                      ? market.price > 1000000 
+                        ? `$${(market.price / 1000000).toFixed(2)}M`
+                        : market.price > 1000
+                        ? `$${(market.price / 1000).toFixed(2)}K`
+                        : `$${market.price.toFixed(3)}`
+                      : '-'}
                   </td>
                   <td
                     className={`py-4 px-6 text-right font-semibold ${
@@ -310,10 +448,10 @@ export default function MarketsPage() {
                     {market.change24h.toFixed(2)}%
                   </td>
                   <td className="py-4 px-6 text-right">
-                    ${(market.volume24h / 1000000).toFixed(2)}M
+                    {market.volume24h > 0 ? `$${(market.volume24h / 1000000).toFixed(2)}M` : '-'}
                   </td>
                   <td className="py-4 px-6 text-right">
-                    ${(market.marketCap / 1000000).toFixed(2)}M
+                    {market.marketCap > 0 ? `$${(market.marketCap / 1000000).toFixed(2)}M` : '-'}
                   </td>
                   <td className="py-4 px-6 text-center">
                     <Link
@@ -324,10 +462,11 @@ export default function MarketsPage() {
                     </Link>
                   </td>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* Mobile Sidebar */}

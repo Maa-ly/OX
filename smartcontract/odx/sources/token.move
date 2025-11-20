@@ -93,7 +93,7 @@ public fun init_for_testing(ctx: &mut TxContext) {
 /// - `ctx`: Transaction context
 /// 
 /// # Returns:
-/// - `ID`: The ID of the newly created IP token object
+/// - `()`: No return value. Token ID can be obtained from object changes in transaction result.
 public fun create_ip_token(
     admin_cap: &AdminCap,
     registry: &mut TokenRegistry,
@@ -103,7 +103,7 @@ public fun create_ip_token(
     category: u8,
     reserve_pool_size: u64,
     ctx: &mut TxContext
-): ID {
+) {
     // Verify admin_cap is valid (prevents unused warning)
     let _ = object::id(admin_cap);
     
@@ -145,7 +145,7 @@ public fun create_ip_token(
     // Use public transfer function from datatypes module
     odx::datatypes::transfer_token(token, tx_context::sender(ctx));
     
-    token_id
+    // No return value - token ID is available in transaction object changes
 }
 
 /// Get token information

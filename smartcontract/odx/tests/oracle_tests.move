@@ -35,11 +35,15 @@ fun test_initialize_token_price() {
         
         // Create a token first
         test_scenario::next_tx(&mut scenario, ADMIN);
-        let ip_token_id = token::create_ip_token(
+        token::create_ip_token(
             &token_admin_cap,
             &mut token_registry,
             b"Test IP", b"TIP", b"Description", 0, 50000, test_scenario::ctx(&mut scenario)
         );
+        
+        // Get token ID from registry (last token added)
+        let token_count = token::get_token_count(&token_registry);
+        let ip_token_id = token::get_token_at(&token_registry, token_count - 1);
         
         // Move to next tx to access the created token
         test_scenario::next_tx(&mut scenario, ADMIN);
@@ -85,11 +89,15 @@ fun test_update_engagement_metrics() {
         
         // Create a token first
         test_scenario::next_tx(&mut scenario, ADMIN);
-        let ip_token_id = token::create_ip_token(
+        token::create_ip_token(
             &token_admin_cap,
             &mut token_registry,
             b"Test IP", b"TIP", b"Description", 0, 50000, test_scenario::ctx(&mut scenario)
         );
+        
+        // Get token ID from registry (last token added)
+        let token_count = token::get_token_count(&token_registry);
+        let ip_token_id = token::get_token_at(&token_registry, token_count - 1);
         
         // Move to next tx to access the created token
         test_scenario::next_tx(&mut scenario, ADMIN);
@@ -150,11 +158,15 @@ fun test_recalculate_price() {
         
         // Create a token first
         test_scenario::next_tx(&mut scenario, ADMIN);
-        let ip_token_id = token::create_ip_token(
+        token::create_ip_token(
             &token_admin_cap,
             &mut token_registry,
             b"Test IP", b"TIP", b"Description", 0, 50000, test_scenario::ctx(&mut scenario)
         );
+        
+        // Get token ID from registry (last token added)
+        let token_count = token::get_token_count(&token_registry);
+        let ip_token_id = token::get_token_at(&token_registry, token_count - 1);
         
         // Move to next tx to access the created token
         test_scenario::next_tx(&mut scenario, ADMIN);

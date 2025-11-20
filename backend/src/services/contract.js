@@ -2,6 +2,7 @@ import { SuiClient } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { fromB64 } from '@mysten/sui/utils';
+import { bcs } from '@mysten/sui/bcs';
 import { config } from '../config/config.js';
 import { logger } from '../utils/logger.js';
 
@@ -30,22 +31,46 @@ export class ContractService {
 
   /**
    * Load admin keypair from environment variable
-   * Expects ADMIN_PRIVATE_KEY as base64 encoded private key
+   * Supports both hex and base64 encoded private keys
    */
   loadAdminKeypair() {
     try {
-      const privateKeyBase64 = process.env.ADMIN_PRIVATE_KEY;
-      if (!privateKeyBase64) {
+      const privateKey = process.env.ADMIN_PRIVATE_KEY;
+      if (!privateKey) {
         logger.warn('ADMIN_PRIVATE_KEY not set in environment. Contract write operations will fail.');
         return null;
       }
 
-      const privateKeyBytes = fromB64(privateKeyBase64);
+      let privateKeyBytes;
+      
+      // Try to detect format: hex (64 chars) or base64
+      if (privateKey.length === 64 && /^[0-9a-fA-F]+$/.test(privateKey)) {
+        // Hex format (64 hex characters = 32 bytes)
+        logger.debug('Detected hex format private key');
+        privateKeyBytes = Buffer.from(privateKey, 'hex');
+      } else {
+        // Assume base64 format
+        logger.debug('Detected base64 format private key');
+        try {
+          privateKeyBytes = fromB64(privateKey);
+        } catch (b64Error) {
+          // If base64 fails, try hex anyway
+          logger.warn('Base64 decode failed, trying hex format');
+          privateKeyBytes = Buffer.from(privateKey, 'hex');
+        }
+      }
+
+      if (privateKeyBytes.length !== 32) {
+        throw new Error(`Invalid private key length: expected 32 bytes, got ${privateKeyBytes.length}. Key format may be incorrect.`);
+      }
+
       const keypair = Ed25519Keypair.fromSecretKey(privateKeyBytes);
       logger.info('Admin keypair loaded successfully');
       return keypair;
     } catch (error) {
       logger.error('Failed to load admin keypair:', error);
+      logger.error('ADMIN_PRIVATE_KEY length:', process.env.ADMIN_PRIVATE_KEY?.length);
+      logger.error('ADMIN_PRIVATE_KEY format check:', /^[0-9a-fA-F]+$/.test(process.env.ADMIN_PRIVATE_KEY || ''));
       return null;
     }
   }
@@ -129,6 +154,107 @@ export class ContractService {
    */
   async getTokenInfo(tokenId) {
     try {
+      // Primary method: Query the token object directly (most reliable)
+      logger.debug(`Querying token object directly: ${tokenId}`);
+      try {
+        const tokenObject = await this.client.getObject({
+          id: tokenId,
+          options: {
+            showContent: true,
+            showType: true,
+            showBcs: true,
+          },
+        });
+
+        if (tokenObject.data?.content?.dataType === 'moveObject') {
+          const fields = tokenObject.data.content.fields;
+          logger.info('Token object fields:', Object.keys(fields));
+          logger.info('Full fields object (first 500 chars):', JSON.stringify(fields).substring(0, 500));
+          
+          // Extract metadata from the token object
+          // IPToken structure: { id, metadata: IPTokenMetadata, total_supply, reserve_pool, circulating_supply, admin }
+          // IPTokenMetadata structure: { name, symbol, description, category, created_at }
+          let name = 'Unknown';
+          let symbol = 'UNK';
+          let description = '';
+          let category = 0;
+
+          if (fields.metadata) {
+            const metadata = fields.metadata;
+            
+            // Metadata can be nested: fields.metadata.fields.name, or direct: fields.metadata.name
+            // Check if metadata has a nested 'fields' structure
+            const metadataFields = metadata.fields || metadata;
+            
+            // Helper function to decode vector<u8> fields (arrays of byte numbers)
+            const decodeVectorU8 = (value) => {
+              if (!value) return '';
+              
+              if (Array.isArray(value)) {
+                // Array of numbers (bytes) - convert to string
+                const bytes = value.filter(b => typeof b === 'number' && b >= 0 && b <= 255);
+                if (bytes.length > 0) {
+                  try {
+                    return String.fromCharCode(...bytes);
+                  } catch (e) {
+                    logger.warn('Error decoding byte array:', e);
+                    return '';
+                  }
+                }
+              } else if (typeof value === 'string') {
+                // Try base64 first
+                try {
+                  const decoded = Buffer.from(value, 'base64').toString('utf-8');
+                  if (decoded.length > 0) {
+                    return decoded;
+                  }
+                } catch (e) {
+                  // Not base64, return as-is
+                  return value;
+                }
+              }
+              
+              return '';
+            };
+            
+            // Extract name, symbol, description from metadata
+            name = decodeVectorU8(metadataFields.name) || 'Unknown';
+            symbol = decodeVectorU8(metadataFields.symbol) || 'UNK';
+            description = decodeVectorU8(metadataFields.description) || '';
+            
+            if (metadataFields.category !== undefined) {
+              category = Number(metadataFields.category);
+            }
+            
+            logger.info(`Parsed metadata for ${tokenId} - name: "${name}", symbol: "${symbol}", category: ${category}`);
+          } else {
+            logger.warn(`No metadata field found in token object ${tokenId}`);
+            logger.debug('Available fields:', Object.keys(fields));
+          }
+
+          // Extract supply information
+          const totalSupply = Number(fields.total_supply || fields.totalSupply || 0);
+          const reservePool = Number(fields.reserve_pool || fields.reservePool || 0);
+          const circulatingSupply = Number(fields.circulating_supply || fields.circulatingSupply || 0);
+
+          logger.info(`Successfully extracted token info for ${tokenId}: ${name} (${symbol})`);
+          
+          return {
+            name,
+            symbol,
+            description,
+            category,
+            totalSupply,
+            reservePool,
+            circulatingSupply,
+          };
+        }
+      } catch (directError) {
+        logger.warn(`Direct object query failed for token ${tokenId}, trying view function:`, directError.message);
+      }
+
+      // Fallback method: Use view function
+      logger.debug(`Trying view function for token: ${tokenId}`);
       const tx = new Transaction();
       
       tx.moveCall({
@@ -136,7 +262,6 @@ export class ContractService {
         arguments: [tx.object(tokenId)],
       });
 
-      // For view functions, we need to use devInspectTransaction
       const result = await this.client.devInspectTransactionBlock({
         sender: this.adminKeypair?.toSuiAddress() || '0x0000000000000000000000000000000000000000000000000000000000000000',
         transactionBlock: tx,
@@ -204,33 +329,125 @@ export class ContractService {
    */
   async getAllTokens() {
     try {
-      const tx = new Transaction();
-      
-      tx.moveCall({
-        target: `${this.packageId}::token::get_all_tokens`,
-        arguments: [tx.object(this.tokenRegistryId)],
-      });
+      // Primary method: Query the TokenRegistry object directly (most reliable)
+      logger.info('Querying TokenRegistry object directly...');
+      try {
+        const registryObject = await this.client.getObject({
+          id: this.tokenRegistryId,
+          options: {
+            showContent: true,
+            showType: true,
+            showBcs: true,
+          },
+        });
 
-      const result = await this.client.devInspectTransactionBlock({
-        sender: this.adminKeypair?.toSuiAddress() || '0x0000000000000000000000000000000000000000000000000000000000000000',
-        transactionBlock: tx,
-      });
+        logger.debug('TokenRegistry object type:', registryObject.data?.type);
+        logger.debug('TokenRegistry content type:', registryObject.data?.content?.dataType);
 
-      if (result.results?.[0]?.returnValues) {
-        // Parse vector of IDs
-        // The return value is a Move vector<ID> which is BCS-encoded
-        const returnValue = result.results[0].returnValues[0];
+        if (registryObject.data?.content?.dataType === 'moveObject') {
+          const fields = registryObject.data.content.fields;
+          logger.debug('TokenRegistry fields:', Object.keys(fields));
+          
+          // The tokens field is an array of token ID strings
+          if (fields.tokens) {
+            let tokenIds = [];
+            
+            // Handle array of token IDs (most common case)
+            if (Array.isArray(fields.tokens)) {
+              tokenIds = fields.tokens
+                .map(token => {
+                  // Token IDs are already strings in format "0x..."
+                  if (typeof token === 'string' && token.startsWith('0x')) {
+                    return token;
+                  }
+                  // Handle object references if any
+                  if (token && typeof token === 'object' && token.id) {
+                    return token.id;
+                  }
+                  return null;
+                })
+                .filter(id => id !== null && id.startsWith('0x'));
+              
+              if (tokenIds.length > 0) {
+                logger.info(`Successfully retrieved ${tokenIds.length} token ID(s) from TokenRegistry object`);
+                logger.debug(`Token IDs: ${tokenIds.join(', ')}`);
+                return tokenIds;
+              }
+            } 
+            // Try as BCS-encoded string (fallback)
+            else if (typeof fields.tokens === 'string') {
+              try {
+                // Parse BCS-encoded vector<ID>
+                const vectorBytes = Buffer.from(fields.tokens, 'base64');
+                let offset = 0;
+                
+                // Read vector length (uleb128)
+                let length = 0;
+                let shift = 0;
+                while (offset < vectorBytes.length) {
+                  const byte = vectorBytes[offset];
+                  length |= (byte & 0x7f) << shift;
+                  offset++;
+                  if ((byte & 0x80) === 0) break;
+                  shift += 7;
+                  if (shift > 32) break;
+                }
+                
+                // Read each ID (32 bytes each)
+                for (let i = 0; i < length && offset + 32 <= vectorBytes.length; i++) {
+                  const idBytes = vectorBytes.slice(offset, offset + 32);
+                  const idHex = '0x' + idBytes.toString('hex');
+                  tokenIds.push(idHex);
+                  offset += 32;
+                }
+                
+                if (tokenIds.length > 0) {
+                  logger.info(`Successfully retrieved ${tokenIds.length} token ID(s) from BCS-encoded tokens field`);
+                  return tokenIds;
+                }
+              } catch (bcsError) {
+                logger.warn('Failed to parse BCS-encoded tokens field:', bcsError);
+              }
+            }
+          }
+          
+          // Try using BCS data if available
+          if (registryObject.data?.bcs?.dataType === 'moveObject' && registryObject.data?.bcs?.bcsBytes) {
+            logger.debug('Attempting to parse BCS bytes from object...');
+            // This would require more complex BCS parsing
+          }
+        }
+      } catch (directError) {
+        logger.warn('Direct object query failed, trying view function:', directError);
+      }
+
+      // Fallback method: Use devInspectTransactionBlock to call the view function
+      logger.info('Trying view function method...');
+      try {
+        const tx = new Transaction();
         
-        // For vector, it's directly the BCS-encoded vector
-        const vectorBytes = Buffer.from(returnValue[1], 'base64');
-        
-        // Move vector format: length (uleb128) followed by elements
-        // For vector<ID>, each ID is 32 bytes
-        try {
+        tx.moveCall({
+          target: `${this.packageId}::token::get_all_tokens`,
+          arguments: [tx.object(this.tokenRegistryId)],
+        });
+
+        const result = await this.client.devInspectTransactionBlock({
+          sender: this.adminKeypair?.toSuiAddress() || '0x0000000000000000000000000000000000000000000000000000000000000000',
+          transactionBlock: tx,
+        });
+
+        if (result.results?.[0]?.returnValues) {
+          const returnValue = result.results[0].returnValues[0];
+          const [returnType, bcsData] = returnValue;
+          
+          logger.debug(`Return type: ${returnType}, BCS data length: ${bcsData.length}`);
+          
+          // Parse BCS-encoded vector<ID>
+          const vectorBytes = Buffer.from(bcsData, 'base64');
           const tokenIds = [];
           let offset = 0;
           
-          // Read length (uleb128 encoding)
+          // Read vector length (uleb128)
           let length = 0;
           let shift = 0;
           while (offset < vectorBytes.length) {
@@ -239,12 +456,10 @@ export class ContractService {
             offset++;
             if ((byte & 0x80) === 0) break;
             shift += 7;
-            if (shift > 32) {
-              // Safety check to prevent infinite loop
-              logger.warn('Vector length parsing exceeded safety limit');
-              break;
-            }
+            if (shift > 32) break;
           }
+          
+          logger.debug(`Parsed vector length: ${length}, remaining bytes: ${vectorBytes.length - offset}`);
           
           // Read each ID (32 bytes each)
           for (let i = 0; i < length && offset + 32 <= vectorBytes.length; i++) {
@@ -254,18 +469,26 @@ export class ContractService {
             offset += 32;
           }
           
-          logger.info(`Retrieved ${tokenIds.length} token IDs from registry`);
-          return tokenIds;
-        } catch (parseError) {
-          logger.warn('Failed to parse token IDs vector, trying alternative method:', parseError);
-          // Fallback: try to get objects directly from Sui
-          return [];
+          if (tokenIds.length > 0) {
+            logger.info(`Successfully retrieved ${tokenIds.length} token ID(s) from view function`);
+            logger.debug(`Token IDs: ${tokenIds.join(', ')}`);
+            return tokenIds;
+          }
         }
+      } catch (viewError) {
+        logger.warn('View function method also failed:', viewError);
       }
 
+      logger.warn('All methods failed to retrieve tokens from registry');
       return [];
     } catch (error) {
       logger.error('Error getting all tokens:', error);
+      logger.error('Error details:', {
+        message: error.message,
+        stack: error.stack,
+        tokenRegistryId: this.tokenRegistryId,
+        packageId: this.packageId,
+      });
       throw new Error(`Failed to get all tokens: ${error.message}`);
     }
   }
@@ -311,16 +534,69 @@ export class ContractService {
       // Fetch info for each token
       for (const tokenId of tokenIds) {
         try {
-          const info = await this.getTokenInfo(tokenId);
+          // Try to get token info via view function first
+          let info;
+          try {
+            info = await this.getTokenInfo(tokenId);
+          } catch (viewError) {
+            logger.warn(`View function failed for token ${tokenId}, trying direct object query:`, viewError.message);
+            
+            // Fallback: Query the token object directly
+            try {
+              const tokenObject = await this.client.getObject({
+                id: tokenId,
+                options: {
+                  showContent: true,
+                  showType: true,
+                },
+              });
+
+              if (tokenObject.data?.content?.dataType === 'moveObject') {
+                const fields = tokenObject.data.content.fields;
+                // Try to extract metadata from the token object
+                // The structure depends on how IPToken is defined in the contract
+                if (fields.metadata) {
+                  const metadata = fields.metadata;
+                  info = {
+                    name: metadata.name || fields.name || 'Unknown',
+                    symbol: metadata.symbol || fields.symbol || 'UNK',
+                    totalSupply: Number(fields.total_supply || fields.totalSupply || 0),
+                    reservePool: Number(fields.reserve_pool || fields.reservePool || 0),
+                    circulatingSupply: Number(fields.circulating_supply || fields.circulatingSupply || 0),
+                  };
+                } else {
+                  // If no metadata field, try to get from fields directly
+                  info = {
+                    name: fields.name || 'Unknown',
+                    symbol: fields.symbol || 'UNK',
+                    totalSupply: Number(fields.total_supply || fields.totalSupply || 0),
+                    reservePool: Number(fields.reserve_pool || fields.reservePool || 0),
+                    circulatingSupply: Number(fields.circulating_supply || fields.circulatingSupply || 0),
+                  };
+                }
+              } else {
+                throw new Error('Token object is not a moveObject');
+              }
+            } catch (objectError) {
+              logger.error(`Direct object query also failed for token ${tokenId}:`, objectError.message);
+              throw viewError; // Re-throw original error
+            }
+          }
+
           tokensWithInfo.push({
             id: tokenId,
             ...info,
           });
         } catch (error) {
           logger.warn(`Failed to get info for token ${tokenId}:`, error.message);
-          // Continue with other tokens even if one fails
+          // Continue with other tokens even if one fails, but include the ID
           tokensWithInfo.push({
             id: tokenId,
+            name: 'Unknown',
+            symbol: 'UNK',
+            totalSupply: 0,
+            reservePool: 0,
+            circulatingSupply: 0,
             error: 'Failed to fetch token info',
           });
         }

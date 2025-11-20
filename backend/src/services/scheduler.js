@@ -6,6 +6,7 @@ import { WalrusIndexerService } from './walrus-indexer.js';
 import { VerificationService } from './verification.js';
 import { AggregationService } from './aggregation.js';
 import { SuiService } from './sui.js';
+import { contractService } from './contract.js';
 
 export class OracleScheduler {
   constructor() {
@@ -55,13 +56,16 @@ export class OracleScheduler {
     logger.info('Starting scheduled update for all IP tokens...');
 
     try {
-      // TODO: Get all IP tokens from smart contract or config
-      const ipTokens = []; // Placeholder
+      // Get all IP tokens from smart contract
+      logger.info('Fetching all IP tokens from TokenRegistry...');
+      const ipTokens = await contractService.getAllTokens();
 
-      if (ipTokens.length === 0) {
+      if (!ipTokens || ipTokens.length === 0) {
         logger.warn('No IP tokens found to update');
         return;
       }
+
+      logger.info(`Found ${ipTokens.length} IP token(s) to update`);
 
       const results = [];
 
