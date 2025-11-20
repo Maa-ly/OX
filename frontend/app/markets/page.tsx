@@ -6,7 +6,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { CustomSelect } from "@/components/ui/custom-select";
 import { MobileBottomNav, MobileSidebar } from "@/components/mobile-nav";
-import { getIPTokens, contractAPI } from "@/lib/utils/api";
+import { getIPTokens, contractAPI, type PriceResponse } from "@/lib/utils/api";
 
 const NavWalletButton = dynamic(
   () =>
@@ -70,9 +70,9 @@ export default function MarketsPage() {
             // Fetch price from oracle
             let price = 0;
             try {
-              const priceData = await contractAPI.getPrice(token.id);
+              const priceData: PriceResponse = await contractAPI.getPrice(token.id);
               console.log(`Price data for ${token.id}:`, priceData);
-              if (priceData?.price !== null && priceData?.price !== undefined) {
+              if (priceData && priceData.price !== null && priceData.price !== undefined) {
                 const rawPrice = Number(priceData.price);
                 // Price is returned in MIST (1e9 MIST = 1 SUI), always convert to SUI
                 // MIST values are typically very large (e.g., 16905572749700243000)

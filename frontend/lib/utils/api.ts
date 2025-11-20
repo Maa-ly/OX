@@ -4,7 +4,7 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000';
 
 // Helper function to make API calls
-async function apiCall<T>(
+async function apiCall<T = any>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<T> {
@@ -79,6 +79,20 @@ export const healthAPI = {
   },
 };
 
+// Price API response type
+export interface PriceResponse {
+  success: boolean;
+  ipTokenId: string;
+  price: number | null;
+}
+
+// Engagement metrics response type
+export interface EngagementMetricsResponse {
+  success: boolean;
+  ipTokenId: string;
+  metrics: any;
+}
+
 // Contract API (for direct contract interactions)
 export const contractAPI = {
   // Get all tokens
@@ -92,13 +106,13 @@ export const contractAPI = {
   },
 
   // Get price for an IP token
-  getPrice: async (ipTokenId: string) => {
-    return apiCall(`/api/contract/oracle/price/${ipTokenId}`);
+  getPrice: async (ipTokenId: string): Promise<PriceResponse> => {
+    return apiCall<PriceResponse>(`/api/contract/oracle/price/${ipTokenId}`);
   },
 
   // Get engagement metrics
-  getEngagementMetrics: async (ipTokenId: string) => {
-    return apiCall(`/api/contract/oracle/metrics/${ipTokenId}`);
+  getEngagementMetrics: async (ipTokenId: string): Promise<EngagementMetricsResponse> => {
+    return apiCall<EngagementMetricsResponse>(`/api/contract/oracle/metrics/${ipTokenId}`);
   },
 };
 
