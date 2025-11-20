@@ -36,19 +36,13 @@ export class WalrusService {
       useHttpApi: this.useHttpApi,
       aggregatorUrl: this.aggregatorUrl,
       publisherUrl: this.publisherUrl,
-      env: {
-        VERCEL: !!process.env.VERCEL,
-        HOME: process.env.HOME,
-        WALRUS_PUBLISHER_URL: process.env.WALRUS_PUBLISHER_URL,
-        WALRUS_AGGREGATOR_URL: process.env.WALRUS_AGGREGATOR_URL,
-      },
     });
     
     // CLI configuration (fallback)
-    this.walrusPath = process.env.WALRUS_BINARY_PATH || 
-      '~/.local/share/suiup/binaries/testnet/walrus-v1.37.0/walrus';
-    this.walrusPath = this.walrusPath.replace('~', process.env.HOME || '');
-    this.configPath = config.walrus.configPath.replace('~', process.env.HOME || '');
+    const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+    this.walrusPath = '~/.local/share/suiup/binaries/testnet/walrus-v1.37.0/walrus';
+    this.walrusPath = this.walrusPath.replace('~', homeDir);
+    this.configPath = config.walrus.configPath.replace('~', homeDir);
     this.context = config.walrus.context;
     
     // Sui client for reading blob metadata
@@ -97,7 +91,7 @@ export class WalrusService {
    */
   async executeHttpRequest(method, endpoint, options = {}) {
     if (!this.aggregatorUrl) {
-      throw new Error('Walrus aggregator URL not configured. Set WALRUS_AGGREGATOR_URL environment variable. You can find aggregator URLs in the Walrus documentation or by running "walrus info"');
+      throw new Error('Walrus aggregator URL not configured.');
     }
 
     const url = `${this.aggregatorUrl.replace(/\/$/, '')}${endpoint}`;
@@ -304,7 +298,27 @@ export class WalrusService {
           if (!response.ok) {
             const errorText = await response.text();
             logger.error(`Walrus HTTP API error: ${response.status} ${response.statusText} - ${errorText}`);
-            throw new Error(`Walrus HTTP API error: ${response.status} ${response.statusText} - ${errorText}`);
+            
+            // Parse error message for better user feedback
+            let parsedError;
+            try {
+              parsedError = JSON.parse(errorText);
+            } catch (e) {
+              parsedError = { error: { message: errorText } };
+            }
+            
+            const errorMessage = parsedError?.error?.message || errorText;
+            
+            // Provide specific guidance for common errors
+            if (errorMessage.includes('WAL coins') || errorMessage.includes('sufficient balance')) {
+              const helpfulMessage = `Insufficient WAL balance: The Walrus account needs WAL tokens to store blobs. ` +
+                `To get WAL tokens: 1) Get Testnet SUI from the faucet, 2) Exchange SUI for WAL using 'walrus get-wal' command (1:1 rate). ` +
+                `See docs: https://docs.wal.app/usage/networks.html and https://docs.wal.app/usage/setup.html. ` +
+                `Error: ${errorMessage}. Publisher URL: ${this.publisherUrl}`;
+              throw new Error(helpfulMessage);
+            }
+            
+            throw new Error(`Walrus HTTP API error: ${response.status} ${response.statusText} - ${errorMessage}`);
           }
           
           // Parse JSON response
@@ -353,7 +367,12 @@ export class WalrusService {
           logger.error('HTTP API error stack:', httpError.stack);
           // In serverless environments, don't fall back to CLI
           if (isServerless) {
-            throw new Error(`Walrus HTTP API failed in serverless environment: ${httpError.message}. Publisher URL: ${this.publisherUrl}. Please check WALRUS_PUBLISHER_URL environment variable.`);
+            // If it's already a formatted error, just re-throw it
+            if (httpError.message.includes('Insufficient WAL balance') || 
+                httpError.message.includes('Walrus HTTP API error')) {
+              throw httpError;
+            }
+            throw new Error(`Walrus HTTP API failed in serverless environment: ${httpError.message}. Publisher URL: ${this.publisherUrl}.`);
           }
           logger.warn('HTTP API failed, falling back to CLI:', httpError.message);
           // Fall through to CLI method only in non-serverless environments
@@ -362,7 +381,7 @@ export class WalrusService {
         // HTTP API not configured
         if (isServerless) {
           // In serverless, HTTP API is required
-          throw new Error(`Walrus HTTP API is required in serverless environments. Publisher URL: ${this.publisherUrl}, Aggregator URL: ${this.aggregatorUrl}. Please set WALRUS_PUBLISHER_URL and WALRUS_AGGREGATOR_URL environment variables.`);
+          throw new Error(`Walrus HTTP API is required in serverless environments. Publisher URL: ${this.publisherUrl}, Aggregator URL: ${this.aggregatorUrl}.`);
         }
         // In non-serverless, we can use CLI
         logger.info('HTTP API not configured, using CLI fallback');
