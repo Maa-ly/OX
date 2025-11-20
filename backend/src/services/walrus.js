@@ -31,6 +31,19 @@ export class WalrusService {
     this.aggregatorUrl = config.walrus.aggregatorUrl; // For reading blobs
     this.publisherUrl = config.walrus.publisherUrl; // For storing blobs
     
+    // Log configuration for debugging
+    logger.info('WalrusService configuration:', {
+      useHttpApi: this.useHttpApi,
+      aggregatorUrl: this.aggregatorUrl,
+      publisherUrl: this.publisherUrl,
+      env: {
+        VERCEL: !!process.env.VERCEL,
+        HOME: process.env.HOME,
+        WALRUS_PUBLISHER_URL: process.env.WALRUS_PUBLISHER_URL,
+        WALRUS_AGGREGATOR_URL: process.env.WALRUS_AGGREGATOR_URL,
+      },
+    });
+    
     // CLI configuration (fallback)
     this.walrusPath = process.env.WALRUS_BINARY_PATH || 
       '~/.local/share/suiup/binaries/testnet/walrus-v1.37.0/walrus';
@@ -45,10 +58,18 @@ export class WalrusService {
     this.metricsCollector = null;
     
     // Log which method we're using
+    const isServerless = process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || !process.env.HOME;
     if (this.useHttpApi && this.publisherUrl && this.aggregatorUrl) {
       logger.info(`WalrusService: Using HTTP API - Publisher: ${this.publisherUrl}, Aggregator: ${this.aggregatorUrl}`);
+      if (isServerless) {
+        logger.info('WalrusService: Running in serverless environment - HTTP API is required');
+      }
     } else {
-      logger.info('WalrusService: Using CLI (HTTP API not fully configured)');
+      if (isServerless) {
+        logger.error('WalrusService: HTTP API not configured but running in serverless environment! This will fail.');
+      } else {
+        logger.info('WalrusService: Using CLI (HTTP API not fully configured)');
+      }
     }
   }
 
@@ -242,6 +263,8 @@ export class WalrusService {
       // Use HTTP API if configured, otherwise fall back to CLI
       // Reference: https://docs.wal.app/usage/web-api.html
       // Store: PUT $PUBLISHER/v1/blobs with data in body
+      const isServerless = process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || !process.env.HOME;
+      
       if (this.useHttpApi && this.publisherUrl) {
         try {
           const epochs = options.epochs || 365;
@@ -259,23 +282,46 @@ export class WalrusService {
           // HTTP API: PUT $PUBLISHER/v1/blobs?epochs=N&permanent=true
           // The body should be the raw binary data
           const url = `${this.publisherUrl.replace(/\/$/, '')}/v1/blobs?${queryParams.toString()}`;
-          logger.debug(`Storing blob via HTTP API: ${url}`);
+          logger.info(`Storing blob via HTTP API: ${url} (${buffer.length} bytes, permanent: ${isPermanent}, epochs: ${epochs})`);
           
-          const response = await fetch(url, {
-            method: 'PUT',
-            body: buffer,
-            headers: {
-              'Content-Type': 'application/octet-stream',
-            },
-          });
+          let response;
+          try {
+            response = await fetch(url, {
+              method: 'PUT',
+              body: buffer,
+              headers: {
+                'Content-Type': 'application/octet-stream',
+              },
+            });
+          } catch (fetchError) {
+            logger.error('Fetch error:', fetchError.message);
+            logger.error('Fetch error stack:', fetchError.stack);
+            throw new Error(`Failed to connect to Walrus publisher: ${fetchError.message}. URL: ${url}`);
+          }
+          
+          logger.info(`Walrus HTTP API response status: ${response.status} ${response.statusText}`);
           
           if (!response.ok) {
             const errorText = await response.text();
+            logger.error(`Walrus HTTP API error: ${response.status} ${response.statusText} - ${errorText}`);
             throw new Error(`Walrus HTTP API error: ${response.status} ${response.statusText} - ${errorText}`);
           }
           
           // Parse JSON response
-          const result = await response.json();
+          const contentType = response.headers.get('content-type');
+          let result;
+          if (contentType && contentType.includes('application/json')) {
+            result = await response.json();
+          } else {
+            const text = await response.text();
+            logger.warn('Walrus API returned non-JSON response, attempting to parse:', text.substring(0, 200));
+            try {
+              result = JSON.parse(text);
+            } catch (parseError) {
+              throw new Error(`Invalid JSON response from Walrus API: ${text.substring(0, 200)}`);
+            }
+          }
+          logger.info('Walrus HTTP API response received:', JSON.stringify(result).substring(0, 500));
           
           // Extract blob ID from response
           // Response format: { "newlyCreated": { "blobObject": { "blobId": "...", ... } } }
@@ -284,6 +330,7 @@ export class WalrusService {
                         result.id;
           
           if (!blobId) {
+            logger.error('No blob ID in response:', JSON.stringify(result));
             throw new Error('No blob ID in response: ' + JSON.stringify(result));
           }
 
@@ -302,12 +349,26 @@ export class WalrusService {
             epochs: epochs,
           };
         } catch (httpError) {
+          logger.error('HTTP API failed:', httpError.message);
+          logger.error('HTTP API error stack:', httpError.stack);
+          // In serverless environments, don't fall back to CLI
+          if (isServerless) {
+            throw new Error(`Walrus HTTP API failed in serverless environment: ${httpError.message}. Publisher URL: ${this.publisherUrl}. Please check WALRUS_PUBLISHER_URL environment variable.`);
+          }
           logger.warn('HTTP API failed, falling back to CLI:', httpError.message);
-          // Fall through to CLI method
+          // Fall through to CLI method only in non-serverless environments
         }
+      } else {
+        // HTTP API not configured
+        if (isServerless) {
+          // In serverless, HTTP API is required
+          throw new Error(`Walrus HTTP API is required in serverless environments. Publisher URL: ${this.publisherUrl}, Aggregator URL: ${this.aggregatorUrl}. Please set WALRUS_PUBLISHER_URL and WALRUS_AGGREGATOR_URL environment variables.`);
+        }
+        // In non-serverless, we can use CLI
+        logger.info('HTTP API not configured, using CLI fallback');
       }
 
-      // CLI fallback
+      // CLI fallback (only in non-serverless environments)
       let tempFile = null;
       try {
         // Write data to temporary file
