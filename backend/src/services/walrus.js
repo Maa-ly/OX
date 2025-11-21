@@ -34,11 +34,24 @@ const execAsync = promisify(exec);
  * 
  * Supports:
  * - HTTP API (primary method, works in serverless environments)
- * - CLI commands (fallback for local development)
+ *   - For production: HTTP API must work - no CLI fallback available in serverless
+ *   - Public testnet publisher may have limitations (WAL balance, wallet configuration)
+ *   - For production: Consider running your own Walrus publisher or using a different storage solution
+ * - CLI commands (fallback for local development only)
+ *   - CLI will NOT work in production/serverless environments (no binary access, no file system)
+ * 
+ * Production Considerations:
+ * - The public testnet publisher (https://publisher.walrus-testnet.walrus.space) may not support
+ *   client wallet addresses or may have limited WAL token balance
+ * - For production deployments, consider:
+ *   1. Running your own Walrus publisher/aggregator (requires infrastructure)
+ *   2. Using a different storage solution
+ *   3. Verifying the public publisher has sufficient WAL tokens
  * 
  * Error Handling:
  * - Provides helpful error messages for common issues (e.g., insufficient WAL balance)
  * - Includes documentation links in error messages
+ * - CLI fallback only available in non-serverless environments
  */
 export class WalrusService {
   constructor() {
@@ -483,20 +496,35 @@ export class WalrusService {
             queryParams.append('deletable', 'true');
           }
           
-          // Note: HTTP API doesn't accept wallet address as parameter
-          // The public testnet publisher uses its own wallet configuration
-          // If HTTP API fails, we'll fall back to CLI which uses wallet from config file
+          // IMPORTANT: How Walrus HTTP API Payment Works:
+          // - The PUBLISHER's wallet pays for storage, NOT the client's wallet
+          // - For authenticated publishers: Clients send JWT tokens, publisher's wallet pays
+          // - For public testnet: The publisher's operator wallet pays (may be out of funds)
+          // - To have YOUR backend pay: Run your own Walrus publisher with YOUR wallet
+          //
+          // Options for production:
+          // 1. Run your own Walrus publisher (your wallet pays, you control it)
+          // 2. Use an authenticated publisher (you fund it, issue JWT tokens to clients)
+          // 3. Public testnet publisher (uses operator's wallet, may fail if out of funds)
           
           // HTTP API: PUT $PUBLISHER/v1/blobs?epochs=N&permanent=true
           // The body should be the raw binary data
           const url = `${this.publisherUrl.replace(/\/$/, '')}/v1/blobs?${queryParams.toString()}`;
           logger.info(`Storing blob via HTTP API: ${url} (${buffer.length} bytes, permanent: ${isPermanent}, epochs: ${epochs})`);
-          logger.info(`Note: If HTTP API fails, will fall back to CLI which uses wallet from config: ${this.walletAddress || 'config file wallet'}`);
+          
+          if (this.publisherUrl.includes('walrus-testnet.walrus.space')) {
+            logger.warn('Using public testnet publisher. This uses the publisher operator\'s wallet, not yours.');
+            logger.warn('If it fails with "insufficient balance", the public publisher is out of funds.');
+            logger.warn('For production, run your own publisher so YOUR wallet pays for storage.');
+          }
           
           // Headers
           const headers = {
             'Content-Type': 'application/octet-stream',
           };
+          
+          // TODO: If using authenticated publisher, add JWT token here:
+          // headers['Authorization'] = `Bearer ${jwtToken}`;
           
           let response;
           try {
@@ -604,15 +632,27 @@ export class WalrusService {
             throw new Error(`Walrus HTTP API failed in serverless environment: ${httpError.message}. Publisher URL: ${this.publisherUrl}.`);
           }
           
-          // For balance errors, parameter errors, or non-serverless, try CLI fallback
-          if (isBalanceError) {
-            logger.warn('HTTP API failed due to balance issue. CLI uses wallet from config file, which may work. Falling back to CLI:', httpError.message);
-          } else if (isParameterError) {
-            logger.warn('HTTP API failed due to parameter issue (public publisher may not support all parameters). Falling back to CLI which uses config file:', httpError.message);
+          // For non-serverless environments, try CLI fallback (CLI won't work in production/serverless)
+          if (!isServerless) {
+            if (isBalanceError) {
+              logger.warn('HTTP API failed due to balance issue. CLI uses wallet from config file, which may work. Falling back to CLI:', httpError.message);
+            } else if (isParameterError) {
+              logger.warn('HTTP API failed due to parameter issue (public publisher may not support all parameters). Falling back to CLI which uses config file:', httpError.message);
+            } else {
+              logger.warn('HTTP API failed, falling back to CLI:', httpError.message);
+            }
+            // Fall through to CLI method for local development
           } else {
-            logger.warn('HTTP API failed, falling back to CLI:', httpError.message);
+            // In serverless/production, CLI won't work - provide helpful error
+            const errorMsg = isBalanceError 
+              ? `HTTP API failed: The public testnet publisher may not have sufficient WAL tokens, or it doesn't accept client wallet addresses. ` +
+                `For production, consider running your own Walrus publisher or using a different storage solution. ` +
+                `Error: ${httpError.message}`
+              : `HTTP API failed and CLI fallback is not available in serverless environments. ` +
+                `Error: ${httpError.message}`;
+            throw new Error(errorMsg);
           }
-          // Fall through to CLI method
+          // Fall through to CLI method (only for non-serverless)
         }
       } else {
         // HTTP API not configured
