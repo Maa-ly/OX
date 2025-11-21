@@ -13,35 +13,11 @@ import { SuiClient } from '@mysten/sui/client';
 import { WalrusFile } from '@mysten/walrus';
 
 /**
- * Wallet adapter interface compatible with Suiet Wallet Kit
+ * Wallet adapter interface compatible with Suiet Wallet Kit and other wallet adapters
+ * Uses 'any' to be compatible with different wallet adapter implementations
  * The wallet from useWallet() hook provides this interface
  */
-export type WalletAdapter = {
-  connected: boolean;
-  account?: {
-    address: string;
-  };
-  getAddress?: () => Promise<string>;
-  signTransactionBlock?: (options: {
-    transactionBlock: Transaction | any;
-  }) => Promise<{
-    bytes: Uint8Array;
-    signature: string;
-  }>;
-  signAndExecuteTransactionBlock: (options: {
-    transactionBlock: Transaction | any;
-    options?: {
-      showEffects?: boolean;
-      showObjectChanges?: boolean;
-    };
-  }) => Promise<{
-    digest: string;
-    signature?: string;
-    bytes?: Uint8Array;
-    effects?: any;
-    objectChanges?: any[];
-  }>;
-};
+export type WalletAdapter = any;
 
 /**
  * Create a Walrus client configured for testnet
