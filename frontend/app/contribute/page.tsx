@@ -11,6 +11,7 @@ import { getIPTokens, type IPToken } from "@/lib/utils/api";
 import { CustomSelect } from "@/components/ui/custom-select";
 import { StarRating } from "@/components/ui/star-rating";
 import { Header } from "@/components/shared/header";
+import { API_BASE_URL } from "@/lib/utils/constants";
 
 type ContributionType = "rating" | "prediction" | "meme" | "review" | "stake";
 
@@ -108,7 +109,7 @@ function ContributeContent() {
       }
 
       // Notify backend to index the contribution (backend doesn't store, just indexes)
-      const result = await fetch(`${API_URL}/api/oracle/index-contribution`, {
+      const result = await fetch(`${API_BASE_URL}/api/oracle/index-contribution`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
