@@ -483,28 +483,20 @@ export class WalrusService {
             queryParams.append('deletable', 'true');
           }
           
-          // Add wallet address if available - helps publisher know which wallet to use for payment
-          // The publisher needs to know which wallet has WAL tokens
-          if (this.walletAddress) {
-            queryParams.append('sender', this.walletAddress);
-            logger.debug(`Including wallet address in request: ${this.walletAddress}`);
-          }
+          // Note: HTTP API doesn't accept wallet address as parameter
+          // The public testnet publisher uses its own wallet configuration
+          // If HTTP API fails, we'll fall back to CLI which uses wallet from config file
           
-          // HTTP API: PUT $PUBLISHER/v1/blobs?epochs=N&permanent=true&sender=0x...
+          // HTTP API: PUT $PUBLISHER/v1/blobs?epochs=N&permanent=true
           // The body should be the raw binary data
           const url = `${this.publisherUrl.replace(/\/$/, '')}/v1/blobs?${queryParams.toString()}`;
-          logger.info(`Storing blob via HTTP API: ${url} (${buffer.length} bytes, permanent: ${isPermanent}, epochs: ${epochs}, wallet: ${this.walletAddress || 'not specified'})`);
+          logger.info(`Storing blob via HTTP API: ${url} (${buffer.length} bytes, permanent: ${isPermanent}, epochs: ${epochs})`);
+          logger.info(`Note: If HTTP API fails, will fall back to CLI which uses wallet from config: ${this.walletAddress || 'config file wallet'}`);
           
-          // Prepare headers
+          // Headers
           const headers = {
             'Content-Type': 'application/octet-stream',
           };
-          
-          // Add wallet address as header as well (some APIs prefer headers)
-          if (this.walletAddress) {
-            headers['X-Wallet-Address'] = this.walletAddress;
-            headers['X-Sender-Address'] = this.walletAddress;
-          }
           
           let response;
           try {
@@ -594,13 +586,16 @@ export class WalrusService {
           logger.error('HTTP API failed:', httpError.message);
           logger.error('HTTP API error stack:', httpError.stack);
           
-          // Check if it's a balance error - these might work with CLI
+          // Check if it's a balance error or API parameter error - these might work with CLI
           const isBalanceError = httpError.message.includes('WAL coins') || 
                                  httpError.message.includes('sufficient balance') ||
                                  httpError.message.includes('Insufficient WAL balance');
+          const isParameterError = httpError.message.includes('unknown field') ||
+                                   httpError.message.includes('deserialize') ||
+                                   httpError.message.includes('400 Bad Request');
           
-          // In serverless environments, don't fall back to CLI (unless it's a balance issue that CLI might handle)
-          if (isServerless && !isBalanceError) {
+          // In serverless environments, only fall back for specific errors that CLI might handle
+          if (isServerless && !isBalanceError && !isParameterError) {
             // If it's already a formatted error, just re-throw it
             if (httpError.message.includes('Insufficient WAL balance') || 
                 httpError.message.includes('Walrus HTTP API error')) {
@@ -609,9 +604,11 @@ export class WalrusService {
             throw new Error(`Walrus HTTP API failed in serverless environment: ${httpError.message}. Publisher URL: ${this.publisherUrl}.`);
           }
           
-          // For balance errors or non-serverless, try CLI fallback
+          // For balance errors, parameter errors, or non-serverless, try CLI fallback
           if (isBalanceError) {
             logger.warn('HTTP API failed due to balance issue. CLI uses wallet from config file, which may work. Falling back to CLI:', httpError.message);
+          } else if (isParameterError) {
+            logger.warn('HTTP API failed due to parameter issue (public publisher may not support all parameters). Falling back to CLI which uses config file:', httpError.message);
           } else {
             logger.warn('HTTP API failed, falling back to CLI:', httpError.message);
           }
