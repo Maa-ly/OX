@@ -12,25 +12,31 @@ export function useWalletAuth() {
     if (wallet.connected && wallet.account?.address) {
       const address = wallet.account.address;
       
-      if (!storeConnected || storeAddress !== address) {
+      // Only redirect if this is a NEW connection (not a refresh)
+      const isNewConnection = !storeConnected || storeAddress !== address;
+      
+      if (isNewConnection) {
         setWalletAuth(address);
         
+        // Only redirect on initial connection, not on page refresh
         if (typeof window !== 'undefined') {
           const currentPath = window.location.pathname;
           const isOnDashboard = currentPath.includes('/dashboard');
           const isOnProtectedRoute = currentPath.includes('/contribute') || 
                                      currentPath.includes('/portfolio') ||
-                                     currentPath.includes('/markets');
+                                     currentPath.includes('/markets') ||
+                                     currentPath.includes('/discover') ||
+                                     currentPath.includes('/trade') ||
+                                     currentPath.includes('/predictions') ||
+                                     currentPath.includes('/marketplace');
           
-          if (!isOnDashboard && !isOnProtectedRoute && currentPath !== '/') {
-            setTimeout(() => {
-              router.push('/dashboard');
-            }, 300);
-          } else if (currentPath === '/') {
+          // Only redirect from home page on new connection, not on refresh
+          if (currentPath === '/') {
             setTimeout(() => {
               router.push('/dashboard');
             }, 300);
           }
+          // Don't redirect if user is already on a valid page
         }
       }
     } else if (storeConnected && !wallet.connected) {

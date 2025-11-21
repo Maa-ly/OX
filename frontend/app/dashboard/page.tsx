@@ -108,11 +108,7 @@ function DashboardContent() {
 
   return (
     <div className="min-h-screen bg-[#0a0a0f] text-white overflow-x-hidden">
-      <Header 
-        showWallet={true}
-        showContribute={true}
-        showMarketplace={true}
-      />
+      <Header />
 
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
         {/* Header */}

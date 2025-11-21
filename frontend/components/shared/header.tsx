@@ -9,13 +9,21 @@ interface HeaderProps {
   showContribute?: boolean;
   showMarketplace?: boolean;
   showDashboard?: boolean;
+  showDiscover?: boolean;
+  showTrade?: boolean;
+  showPortfolio?: boolean;
+  showPredictions?: boolean;
 }
 
 export function Header({ 
   showWallet = true, 
-  showContribute = false,
-  showMarketplace = false,
-  showDashboard = false 
+  showContribute = true,
+  showMarketplace = true,
+  showDashboard = true,
+  showDiscover = true,
+  showTrade = true,
+  showPortfolio = true,
+  showPredictions = true,
 }: HeaderProps) {
   return (
     <nav className="border-b border-zinc-800/50 bg-[#0a0a0f]/80 backdrop-blur-xl sticky top-0 z-50">
@@ -38,20 +46,52 @@ export function Header({
           </Link>
           
           <div className="flex items-center gap-4">
+            {showMarketplace && (
+              <Link
+                href="/markets"
+                className="hidden md:block text-sm font-medium text-zinc-300 transition-colors hover:text-white"
+              >
+                Markets
+              </Link>
+            )}
+            {showTrade && (
+              <Link
+                href="/trade"
+                className="hidden md:block text-sm font-medium text-zinc-300 transition-colors hover:text-white"
+              >
+                Trade
+              </Link>
+            )}
+            {showPortfolio && (
+              <Link
+                href="/portfolio"
+                className="hidden md:block text-sm font-medium text-zinc-300 transition-colors hover:text-white"
+              >
+                Portfolio
+              </Link>
+            )}
+            {showDiscover && (
+              <Link
+                href="/discover"
+                className="hidden md:block text-sm font-medium text-zinc-300 transition-colors hover:text-white"
+              >
+                Discover
+              </Link>
+            )}
+            {showPredictions && (
+              <Link
+                href="/predictions"
+                className="hidden md:block text-sm font-medium text-zinc-300 transition-colors hover:text-white"
+              >
+                Predictions
+              </Link>
+            )}
             {showDashboard && (
               <Link
                 href="/dashboard"
-                className="text-sm font-medium text-zinc-300 transition-colors hover:text-white"
+                className="hidden md:block text-sm font-medium text-zinc-300 transition-colors hover:text-white"
               >
                 Dashboard
-              </Link>
-            )}
-            {showMarketplace && (
-              <Link
-                href="/marketplace"
-                className="text-sm font-medium text-zinc-300 transition-colors hover:text-white"
-              >
-                Marketplace
               </Link>
             )}
             {showContribute && (

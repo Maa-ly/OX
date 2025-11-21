@@ -194,14 +194,16 @@ export function ConnectionModal({ open, onOpenChange }: ConnectionModalProps) {
 
       {/* Wallet-kit modal - only render when mounted and showWalletModal is true */}
       {mounted && showWalletModal && (
-        <ConnectModal
-          open={showWalletModal}
-          onOpenChange={(open) => {
-            setShowWalletModal(open);
-            // If wallet modal is closed, don't close the parent modal
-            // The parent modal is already closed when wallet modal opens
-          }}
-        />
+        <div className="wallet-kit-modal-wrapper">
+          <ConnectModal
+            open={showWalletModal}
+            onOpenChange={(open) => {
+              setShowWalletModal(open);
+              // If wallet modal is closed, don't close the parent modal
+              // The parent modal is already closed when wallet modal opens
+            }}
+          />
+        </div>
       )}
     </>
   );

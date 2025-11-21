@@ -802,3 +802,130 @@ export async function storeContributionWithUserWallet(
   });
 }
 
+/**
+ * Create a step-by-step Walrus flow for browser environments
+ * This allows separate user interactions for register and certify steps
+ * to avoid browser popup blocking
+ * 
+ * Reference: https://sdk.mystenlabs.com/walrus
+ * 
+ * @param data - Data to store (string or Uint8Array)
+ * @param wallet - User's wallet (from useWallet() hook)
+ * @param options - Storage options
+ * @returns Flow object with methods: encode(), register(), upload(), certify(), listFiles()
+ */
+export function createWalrusFlow(
+  data: string | Uint8Array,
+  wallet: WalletAdapter,
+  options: {
+    epochs?: number;
+    deletable?: boolean;
+    permanent?: boolean;
+    network?: 'testnet' | 'mainnet';
+  } = {}
+) {
+  if (!wallet || !wallet.connected || !wallet.account?.address) {
+    throw new Error('Wallet not connected. Please connect your wallet first.');
+  }
+
+  const network = options.network || 'testnet';
+  const client = createWalrusClient(network);
+
+  // Convert data to Uint8Array if string
+  const blob = typeof data === 'string' 
+    ? new TextEncoder().encode(data)
+    : data;
+
+  const epochs = options.epochs || 365;
+  const deletable = options.deletable ?? !options.permanent;
+  const walletAddress = wallet.account?.address || '';
+
+  if (!walletAddress) {
+    throw new Error('Cannot get wallet address - wallet not connected');
+  }
+
+  // Create WalrusFile and initialize the flow
+  const file = WalrusFile.from({
+    contents: blob,
+    identifier: 'blob.bin',
+  });
+
+  const flow = (client as any).walrus.writeFilesFlow({
+    files: [file],
+  });
+
+  return {
+    // Step 1: Encode the files and generate blobId (can be done immediately)
+    encode: async () => {
+      await flow.encode();
+      console.log('[createWalrusFlow] Files encoded successfully');
+    },
+    
+    // Step 2: Register the blob on-chain (returns Transaction - user must click button to sign)
+    register: () => {
+      const registerTx = flow.register({
+        epochs,
+        owner: walletAddress,
+        deletable,
+      });
+
+      if (!registerTx) {
+        throw new Error('Register transaction is null or undefined');
+      }
+
+      // Set sender on transaction
+      if (registerTx instanceof Transaction && typeof registerTx.setSender === 'function') {
+        try {
+          registerTx.setSender(walletAddress);
+        } catch (setSenderError: any) {
+          console.warn('[createWalrusFlow] Could not set sender:', setSenderError);
+        }
+      }
+
+      return registerTx;
+    },
+
+    // Step 3: Upload the data to storage nodes (can be done after register)
+    upload: async (digest: string) => {
+      await flow.upload({ digest });
+      console.log('[createWalrusFlow] Data uploaded to storage nodes');
+    },
+
+    // Step 4: Certify the blob on-chain (returns Transaction - user must click button to sign)
+    certify: () => {
+      const certifyTx = flow.certify();
+
+      if (!certifyTx) {
+        throw new Error('Certify transaction is null or undefined');
+      }
+
+      // Set sender on transaction
+      if (certifyTx instanceof Transaction && typeof certifyTx.setSender === 'function') {
+        try {
+          certifyTx.setSender(walletAddress);
+        } catch (setSenderError: any) {
+          console.warn('[createWalrusFlow] Could not set sender:', setSenderError);
+        }
+      }
+
+      return certifyTx;
+    },
+
+    // Step 5: Get the uploaded files
+    listFiles: async () => {
+      const files = await flow.listFiles();
+      console.log('[createWalrusFlow] Files uploaded:', files);
+      return files;
+    },
+
+    // Helper to sign and execute a transaction (used by register and certify)
+    signAndExecute: async (transaction: Transaction) => {
+      return await signAndExecuteTransaction({
+        transaction,
+        wallet,
+        network,
+      });
+    },
+  };
+}
+

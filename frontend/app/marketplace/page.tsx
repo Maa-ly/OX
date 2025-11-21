@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import Link from 'next/link';
 import { mockAPI, type IPToken } from '@/lib/mocks/data';
+import { Header } from '@/components/shared/header';
 
 export default function Marketplace() {
   const [tokens, setTokens] = useState<IPToken[]>([]);
@@ -35,36 +35,7 @@ export default function Marketplace() {
 
   return (
     <div className="min-h-screen bg-[#0a0a0f] text-white">
-      {/* Navigation */}
-      <nav className="border-b border-zinc-800/50 bg-[#0a0a0f]/80 backdrop-blur-xl">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="flex h-16 items-center justify-between">
-            <Link href="/" className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-cyan-500 to-blue-600">
-                <span className="text-xl font-bold">O</span>
-              </div>
-              <div>
-                <div className="text-lg font-bold tracking-tight">ODX</div>
-                <div className="text-xs text-zinc-400">Otaku Data Exchange</div>
-              </div>
-            </Link>
-            <div className="flex items-center gap-4">
-              <Link
-                href="/dashboard"
-                className="text-sm font-medium text-zinc-300 transition-colors hover:text-white"
-              >
-                Dashboard
-              </Link>
-              <Link
-                href="/contribute"
-                className="rounded-lg border border-cyan-500/50 bg-gradient-to-r from-cyan-500/10 to-blue-600/10 px-4 py-2 text-sm font-medium text-cyan-400 transition-colors hover:border-cyan-400 hover:bg-cyan-500/20"
-              >
-                Contribute
-              </Link>
-            </div>
-          </div>
-        </div>
-      </nav>
+      <Header />
 
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
         {/* Header */}

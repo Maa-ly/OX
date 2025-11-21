@@ -10,6 +10,8 @@ import { storePost, getPosts, likePost, commentOnPost, type Post } from "@/lib/u
 import { useWalletAuth } from "@/lib/hooks/useWalletAuth";
 import { useZkLogin } from "@/lib/hooks/useZkLogin";
 import { useAuthStore } from "@/lib/stores/auth-store";
+import { ErrorModal, SuccessModal } from "@/components/shared/modal";
+import { checkWALBalance, estimateWalrusCost, checkSufficientBalance, type BalanceInfo } from "@/lib/utils/wal-balance";
 
 const NavWalletButton = dynamic(
   () =>
@@ -49,11 +51,55 @@ function DiscoverPageContent() {
   const [loadingTokens, setLoadingTokens] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Multi-step Walrus flow state (for separate user interactions)
+  const [postFlow, setPostFlow] = useState<any>(null);
+  const [mediaFlow, setMediaFlow] = useState<any>(null);
+  const [postFlowStep, setPostFlowStep] = useState<'idle' | 'encoded' | 'registered' | 'uploaded' | 'certified' | 'complete'>('idle');
+  const [mediaFlowStep, setMediaFlowStep] = useState<'idle' | 'encoded' | 'registered' | 'uploaded' | 'certified' | 'complete'>('idle');
+  const [registering, setRegistering] = useState(false);
+  const [certifying, setCertifying] = useState(false);
+  const [mediaRegistering, setMediaRegistering] = useState(false);
+  const [mediaCertifying, setMediaCertifying] = useState(false);
+  
+  // Modal states
+  const [errorModal, setErrorModal] = useState<{ 
+    open: boolean; 
+    message: string; 
+    details?: string;
+    balanceInfo?: {
+      current: string;
+      required: string;
+      shortfall: string;
+    };
+  }>({
+    open: false,
+    message: '',
+  });
+  const [successModal, setSuccessModal] = useState<{ open: boolean; message: string }>({
+    open: false,
+    message: '',
+  });
+  
+  // Balance state
+  const [walBalance, setWalBalance] = useState<BalanceInfo | null>(null);
+  const [loadingBalance, setLoadingBalance] = useState(false);
+  const [estimatedCost, setEstimatedCost] = useState<{ costMist: number; costWAL: string } | null>(null);
+
   // Load IP tokens and posts
   useEffect(() => {
     loadTokens();
     loadPosts();
   }, []);
+
+  // Load WAL balance when wallet is connected
+  useEffect(() => {
+    if (currentAddress && wallet?.connected) {
+      loadWALBalance();
+    } else {
+      setWalBalance(null);
+      setEstimatedCost(null);
+    }
+  }, [currentAddress, wallet?.connected]);
 
   // Real-time updates: Poll for new posts every 30 seconds
   useEffect(() => {
@@ -102,6 +148,29 @@ function DiscoverPageContent() {
     }
   };
 
+  const loadWALBalance = async () => {
+    if (!currentAddress) return;
+    
+    setLoadingBalance(true);
+    try {
+      const balance = await checkWALBalance(currentAddress, 'testnet');
+      setWalBalance(balance);
+      
+      // Estimate cost for post (rough estimate based on content length)
+      const postSize = newPost.length + (mediaFile ? mediaFile.size : 0);
+      const cost = estimateWalrusCost(postSize, 365);
+      setEstimatedCost({
+        costMist: cost.estimatedCostMist,
+        costWAL: cost.estimatedCostWAL,
+      });
+    } catch (error) {
+      console.error("Failed to load WAL balance:", error);
+      // Don't show error to user, just log it
+    } finally {
+      setLoadingBalance(false);
+    }
+  };
+
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -112,6 +181,15 @@ function DiscoverPageContent() {
       const reader = new FileReader();
       reader.onloadend = () => {
         setMediaPreview(reader.result as string);
+        // Recalculate cost when media is added
+        if (currentAddress && wallet?.connected) {
+          const postSize = newPost.length + file.size;
+          const cost = estimateWalrusCost(postSize, 365);
+          setEstimatedCost({
+            costMist: cost.estimatedCostMist,
+            costWAL: cost.estimatedCostWAL,
+          });
+        }
       };
       reader.readAsDataURL(file);
     } else if (file.type.startsWith("video/")) {
@@ -120,10 +198,19 @@ function DiscoverPageContent() {
       const reader = new FileReader();
       reader.onloadend = () => {
         setMediaPreview(reader.result as string);
+        // Recalculate cost when media is added
+        if (currentAddress && wallet?.connected) {
+          const postSize = newPost.length + file.size;
+          const cost = estimateWalrusCost(postSize, 365);
+          setEstimatedCost({
+            costMist: cost.estimatedCostMist,
+            costWAL: cost.estimatedCostWAL,
+          });
+        }
       };
       reader.readAsDataURL(file);
     } else {
-      alert("Please select an image or video file");
+      setErrorModal({ open: true, message: "Please select an image or video file" });
     }
   };
 
@@ -144,24 +231,66 @@ function DiscoverPageContent() {
     );
   };
 
+  // Step 1: Initialize and encode the post (called when user clicks "Create Post")
   const handleSubmitPost = async () => {
     if (!newPost.trim()) {
-      alert("Please enter some content");
+      setErrorModal({ open: true, message: 'Please enter some content' });
       return;
     }
 
     if (selectedIPTokens.length === 0) {
-      alert("Please select at least one IP token this post is about");
+      setErrorModal({ open: true, message: 'Please select at least one IP token this post is about' });
       return;
     }
 
     if (!currentAddress) {
-      alert("Please connect your wallet to create a post");
+      setErrorModal({ open: true, message: 'Please connect your wallet to create a post' });
       return;
+    }
+
+    if (!wallet || !wallet.connected || !wallet.account?.address) {
+      setErrorModal({ open: true, message: 'Please connect your wallet to post' });
+      return;
+    }
+
+    // Check balance before proceeding
+    try {
+      await loadWALBalance();
+      
+      if (walBalance && estimatedCost) {
+        const sufficient = checkSufficientBalance(walBalance, estimatedCost.costMist);
+        
+        if (!sufficient.sufficient) {
+          setErrorModal({
+            open: true,
+            message: 'Insufficient WAL Tokens',
+            details: `You need ${estimatedCost.costWAL} to store this post, but you only have ${walBalance.walBalanceFormatted}. You need ${sufficient.shortfallFormatted} more.`,
+          });
+          return;
+        }
+      }
+    } catch (balanceError) {
+      console.error('Error checking balance:', balanceError);
+      // Continue anyway - the transaction will fail with a better error message
     }
 
     setSubmitting(true);
     try {
+      const { createWalrusFlow } = await import('@/lib/utils/walrus-sdk');
+
+      // First, handle media file if present
+      if (mediaFile) {
+        const arrayBuffer = await mediaFile.arrayBuffer();
+        const blob = new Uint8Array(arrayBuffer);
+        const flow = createWalrusFlow(blob, wallet, {
+          permanent: true,
+          epochs: 365,
+        });
+        await flow.encode();
+        setMediaFlow(flow);
+        setMediaFlowStep('encoded');
+      }
+
       // Create post object
       const postData = {
         content: newPost,
@@ -170,56 +299,255 @@ function DiscoverPageContent() {
         author: currentAddress.slice(0, 6) + "..." + currentAddress.slice(-4),
         authorAddress: currentAddress,
         timestamp: Date.now(),
-        tags: [], // Can be extracted from content or added later
+        tags: [],
       };
 
-      // Store post on Walrus using user's wallet (with media file if present)
-      // Users pay with WAL tokens from their own wallets using TypeScript SDK
-      if (!wallet || !wallet.connected || !wallet.account?.address) {
-        alert("Please connect your wallet to post");
-        return;
-      }
-      
-      const result = await storePost(postData, {
-        wallet,
-        mediaFile: mediaFile || undefined,
+      // Create flow for post data
+      const postDataJson = JSON.stringify({
+        post_type: 'discover_post',
+        engagement_type: 'post',
+        ...postData,
+        likes: 0,
+        comments: 0,
+        likesList: [],
+        commentsList: [],
       });
 
-      // Reload posts to get the latest
+      const flow = createWalrusFlow(postDataJson, wallet, {
+        permanent: true,
+        epochs: 365,
+      });
+      await flow.encode();
+      setPostFlow(flow);
+      setPostFlowStep('encoded');
+
+      setSuccessModal({ open: true, message: "Post prepared! Click 'Register' to continue." });
+    } catch (error: any) {
+      console.error("Failed to prepare post:", error);
+      setErrorModal({ 
+        open: true, 
+        message: error?.message || "Unknown error occurred",
+        details: `Failed to prepare post: ${error?.message || "Unknown error"}`,
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Step 2: Register the blob (separate user interaction - triggered by button click)
+  const handleRegister = async (isMedia: boolean = false) => {
+    const flow = isMedia ? mediaFlow : postFlow;
+    if (!flow) {
+      setErrorModal({ open: true, message: "Please prepare the post first" });
+      return;
+    }
+
+    if (isMedia) {
+      setMediaRegistering(true);
+    } else {
+      setRegistering(true);
+    }
+
+    try {
+      const registerTx = flow.register();
+      const result = await flow.signAndExecute(registerTx);
+      
+      // Upload happens automatically after register
+      await flow.upload(result.digest);
+      
+      if (isMedia) {
+        setMediaFlowStep('uploaded');
+      } else {
+        setPostFlowStep('uploaded');
+      }
+
+      setSuccessModal({ 
+        open: true, 
+        message: isMedia ? "Media registered! Click 'Certify' to continue." : "Post registered! Click 'Certify' to complete." 
+      });
+    } catch (error: any) {
+      console.error("Failed to register:", error);
+      const errorMessage = error?.message || "Unknown error";
+      
+      // Check if it's a balance error and extract details
+      const isBalanceError = errorMessage.toLowerCase().includes('insufficient') || 
+                            errorMessage.toLowerCase().includes('not enough coins') ||
+                            errorMessage.toLowerCase().includes('wal');
+      
+      let balanceInfo = undefined;
+      if (isBalanceError && walBalance && estimatedCost) {
+        const sufficient = checkSufficientBalance(walBalance, estimatedCost.costMist);
+        balanceInfo = {
+          current: walBalance.walBalanceFormatted,
+          required: estimatedCost.costWAL,
+          shortfall: sufficient.shortfallFormatted,
+        };
+      }
+      
+      setErrorModal({ 
+        open: true, 
+        message: errorMessage,
+        details: `Failed to register: ${errorMessage}`,
+        balanceInfo,
+      });
+    } finally {
+      if (isMedia) {
+        setMediaRegistering(false);
+      } else {
+        setRegistering(false);
+      }
+    }
+  };
+
+  // Step 3: Certify the blob (separate user interaction - triggered by button click)
+  const handleCertify = async (isMedia: boolean = false) => {
+    const flow = isMedia ? mediaFlow : postFlow;
+    if (!flow) {
+      setErrorModal({ open: true, message: "Please register first" });
+      return;
+    }
+
+    if (isMedia) {
+      setMediaCertifying(true);
+    } else {
+      setCertifying(true);
+    }
+
+    try {
+      const certifyTx = flow.certify();
+      await flow.signAndExecute(certifyTx);
+      
+      const files = await flow.listFiles();
+      const blobId = files[0]?.blobId;
+
+      if (!blobId) {
+        throw new Error("No blob ID returned");
+      }
+
+      if (isMedia) {
+        setMediaFlowStep('complete');
+        // After media is complete, if post is also complete, finish the process
+        if (postFlowStep === 'complete') {
+          await finishPostCreation();
+        }
+      } else {
+        setPostFlowStep('complete');
+        // After post is complete, if media is also complete (or no media), finish the process
+        if (!mediaFile || mediaFlowStep === 'complete') {
+          await finishPostCreation();
+        }
+      }
+    } catch (error: any) {
+      console.error("Failed to certify:", error);
+      const errorMessage = error?.message || "Unknown error";
+      
+      // Check if it's a balance error and extract details
+      const isBalanceError = errorMessage.toLowerCase().includes('insufficient') || 
+                            errorMessage.toLowerCase().includes('not enough coins') ||
+                            errorMessage.toLowerCase().includes('wal');
+      
+      let balanceInfo = undefined;
+      if (isBalanceError && walBalance && estimatedCost) {
+        const sufficient = checkSufficientBalance(walBalance, estimatedCost.costMist);
+        balanceInfo = {
+          current: walBalance.walBalanceFormatted,
+          required: estimatedCost.costWAL,
+          shortfall: sufficient.shortfallFormatted,
+        };
+      }
+      
+      setErrorModal({ 
+        open: true, 
+        message: errorMessage,
+        details: `Failed to certify: ${errorMessage}`,
+        balanceInfo,
+      });
+    } finally {
+      if (isMedia) {
+        setMediaCertifying(false);
+      } else {
+        setCertifying(false);
+      }
+    }
+  };
+
+  // Final step: Complete post creation and index
+  const finishPostCreation = async () => {
+    if (!currentAddress) {
+      alert("Wallet address not available");
+      return;
+    }
+
+    try {
+      // Get blob IDs from flows
+      const postFiles = await postFlow.listFiles();
+      const postBlobId = postFiles[0]?.blobId;
+      
+      let mediaBlobId: string | undefined;
+      if (mediaFile && mediaFlow) {
+        const mediaFiles = await mediaFlow.listFiles();
+        mediaBlobId = mediaFiles[0]?.blobId;
+      }
+
+      // Create post data for indexing
+      const postData = {
+        post_type: 'discover_post',
+        engagement_type: 'post',
+        content: newPost,
+        mediaType: mediaType,
+        mediaBlobId: mediaBlobId,
+        ipTokenIds: selectedIPTokens,
+        author: currentAddress.slice(0, 6) + "..." + currentAddress.slice(-4),
+        authorAddress: currentAddress,
+        timestamp: Date.now(),
+        tags: [],
+        likes: 0,
+        comments: 0,
+        likesList: [],
+        commentsList: [],
+      };
+
+      // Index the post on backend
+      const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+      await fetch(`${API_BASE_URL}/api/posts/index`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ blobId: postBlobId, post: postData }),
+      });
+
+      // Reload posts
       await loadPosts();
 
-      // Reset form
+      // Reset everything
       setNewPost("");
       setSelectedIPTokens([]);
       setMediaFile(null);
       setMediaPreview(null);
       setMediaType("text");
       setShowCreatePost(false);
+      setPostFlow(null);
+      setMediaFlow(null);
+      setPostFlowStep('idle');
+      setMediaFlowStep('idle');
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
 
-      alert("Post created successfully! Stored on Walrus.");
+      setSuccessModal({ open: true, message: "Post created successfully! Stored on Walrus." });
     } catch (error: any) {
-      console.error("Failed to create post:", error);
-      console.error("Error details:", {
-        message: error?.message,
-        stack: error?.stack,
-        name: error?.name,
-        error: error,
+      console.error("Failed to complete post:", error);
+      const errorMessage = error?.message || "Unknown error";
+      setErrorModal({ 
+        open: true, 
+        message: errorMessage,
+        details: `Failed to complete post: ${errorMessage}`,
       });
-      
-      // Show detailed error message to user
-      const errorMessage = error?.message || String(error) || "Unknown error occurred";
-      alert(`Failed to create post: ${errorMessage}\n\nCheck the browser console for more details.`);
-    } finally {
-      setSubmitting(false);
     }
   };
 
   const handleLikePost = async (post: Post) => {
     if (!currentAddress) {
-      alert("Please connect your wallet to like posts");
+      setErrorModal({ open: true, message: "Please connect your wallet to like posts" });
       return;
     }
 
@@ -238,9 +566,9 @@ function DiscoverPageContent() {
             : p
         )
       );
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to like post:", error);
-      alert("Failed to like post. Please try again.");
+      setErrorModal({ open: true, message: "Failed to like post. Please try again." });
     } finally {
       setLikingPosts((prev) => {
         const newSet = new Set(prev);
@@ -252,12 +580,12 @@ function DiscoverPageContent() {
 
   const handleCommentPost = async (post: Post) => {
     if (!currentAddress) {
-      alert("Please connect your wallet to comment");
+      setErrorModal({ open: true, message: "Please connect your wallet to comment" });
       return;
     }
 
     if (!commentText.trim()) {
-      alert("Please enter a comment");
+      setErrorModal({ open: true, message: "Please enter a comment" });
       return;
     }
 
@@ -284,9 +612,9 @@ function DiscoverPageContent() {
 
       setCommentText("");
       setShowCommentModal(null);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to comment on post:", error);
-      alert("Failed to comment. Please try again.");
+      setErrorModal({ open: true, message: "Failed to comment. Please try again." });
     } finally {
       setCommentingPosts((prev) => {
         const newSet = new Set(prev);
@@ -461,10 +789,52 @@ function DiscoverPageContent() {
               )}
             </div>
 
+            {/* WAL Balance Display */}
+            {walBalance && (
+              <div className="mb-4 p-3 bg-zinc-800/50 border border-zinc-700 rounded-lg">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-zinc-400">WAL Balance</p>
+                    <p className="text-lg font-semibold text-white">
+                      {loadingBalance ? 'Loading...' : walBalance.walBalanceFormatted}
+                    </p>
+                  </div>
+                  {estimatedCost && (
+                    <div className="text-right">
+                      <p className="text-sm text-zinc-400">Estimated Cost</p>
+                      <p className={`text-lg font-semibold ${
+                        walBalance.walBalance >= estimatedCost.costMist 
+                          ? 'text-green-400' 
+                          : 'text-red-400'
+                      }`}>
+                        {estimatedCost.costWAL}
+                      </p>
+                    </div>
+                  )}
+                </div>
+                {estimatedCost && walBalance.walBalance < estimatedCost.costMist && (
+                  <div className="mt-2 p-2 bg-red-500/10 border border-red-500/20 rounded text-sm text-red-300">
+                    ⚠️ Insufficient balance. You need {estimatedCost.costWAL} but only have {walBalance.walBalanceFormatted}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Content Textarea */}
             <textarea
               value={newPost}
-              onChange={(e) => setNewPost(e.target.value)}
+              onChange={(e) => {
+                setNewPost(e.target.value);
+                // Recalculate cost when content changes
+                if (currentAddress && wallet?.connected) {
+                  const postSize = e.target.value.length + (mediaFile ? mediaFile.size : 0);
+                  const cost = estimateWalrusCost(postSize, 365);
+                  setEstimatedCost({
+                    costMist: cost.estimatedCostMist,
+                    costWAL: cost.estimatedCostWAL,
+                  });
+                }
+              }}
               placeholder="Share your thoughts, memes, or content..."
               className="w-full bg-zinc-950 border border-zinc-700 rounded-lg p-4 min-h-32 focus:outline-none focus:border-cyan-500 resize-none"
             />
@@ -539,29 +909,111 @@ function DiscoverPageContent() {
                   </svg>
                 </button>
               </div>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowCreatePost(false);
-                    setNewPost("");
-                    setSelectedIPTokens([]);
-                    setMediaFile(null);
-                    setMediaPreview(null);
-                    setMediaType("text");
-                  }}
-                  className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSubmitPost}
-                  disabled={submitting || !newPost.trim() || selectedIPTokens.length === 0}
-                  className="px-6 py-2 bg-cyan-500 hover:bg-cyan-600 disabled:bg-zinc-700 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors"
-                >
-                  {submitting ? "Posting..." : "Post to Walrus"}
-                </button>
+              <div className="flex flex-col gap-3">
+                {/* Multi-step flow buttons */}
+                {postFlowStep === 'idle' && (
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowCreatePost(false);
+                        setNewPost("");
+                        setSelectedIPTokens([]);
+                        setMediaFile(null);
+                        setMediaPreview(null);
+                        setMediaType("text");
+                        setPostFlow(null);
+                        setMediaFlow(null);
+                        setPostFlowStep('idle');
+                        setMediaFlowStep('idle');
+                      }}
+                      className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSubmitPost}
+                      disabled={submitting || !newPost.trim() || selectedIPTokens.length === 0}
+                      className="px-6 py-2 bg-cyan-500 hover:bg-cyan-600 disabled:bg-zinc-700 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors"
+                    >
+                      {submitting ? "Preparing..." : "Prepare Post"}
+                    </button>
+                  </div>
+                )}
+
+                {/* Step 2: Register (separate user interaction) */}
+                {postFlowStep === 'encoded' && (
+                  <div className="space-y-2">
+                    {mediaFile && mediaFlowStep === 'encoded' && (
+                      <div className="mb-2 p-3 bg-zinc-800 rounded-lg">
+                        <p className="text-sm text-zinc-300 mb-2">Media ready. Register media first:</p>
+                        <button
+                          type="button"
+                          onClick={() => handleRegister(true)}
+                          disabled={mediaRegistering}
+                          className="w-full px-4 py-2 bg-cyan-500 hover:bg-cyan-600 disabled:bg-zinc-700 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors"
+                        >
+                          {mediaRegistering ? "Registering Media..." : "Register Media (Wallet Popup)"}
+                        </button>
+                      </div>
+                    )}
+                    <div className="p-3 bg-zinc-800 rounded-lg">
+                      <p className="text-sm text-zinc-300 mb-2">
+                        Post prepared! Click below to register on-chain. This will open your wallet to sign.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => handleRegister(false)}
+                        disabled={registering || (!!mediaFile && mediaFlowStep !== 'uploaded' && mediaFlowStep !== 'complete')}
+                        className="w-full px-4 py-2 bg-cyan-500 hover:bg-cyan-600 disabled:bg-zinc-700 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors"
+                      >
+                        {registering ? "Registering..." : "Register Post (Wallet Popup)"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Step 3: Certify (separate user interaction) */}
+                {postFlowStep === 'uploaded' && (
+                  <div className="space-y-2">
+                    {mediaFile && mediaFlowStep === 'uploaded' && (
+                      <div className="mb-2 p-3 bg-zinc-800 rounded-lg">
+                        <p className="text-sm text-zinc-300 mb-2">Media uploaded. Certify media:</p>
+                        <button
+                          type="button"
+                          onClick={() => handleCertify(true)}
+                          disabled={mediaCertifying}
+                          className="w-full px-4 py-2 bg-cyan-500 hover:bg-cyan-600 disabled:bg-zinc-700 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors"
+                        >
+                          {mediaCertifying ? "Certifying Media..." : "Certify Media (Wallet Popup)"}
+                        </button>
+                      </div>
+                    )}
+                    <div className="p-3 bg-zinc-800 rounded-lg">
+                      <p className="text-sm text-zinc-300 mb-2">
+                        Post uploaded! Click below to certify on-chain. This will open your wallet to sign.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => handleCertify(false)}
+                        disabled={certifying || (!!mediaFile && mediaFlowStep !== 'complete')}
+                        className="w-full px-4 py-2 bg-cyan-500 hover:bg-cyan-600 disabled:bg-zinc-700 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors"
+                      >
+                        {certifying ? "Certifying..." : "Certify Post (Wallet Popup)"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Step 4: Complete */}
+                {(postFlowStep === 'complete' || (postFlowStep === 'uploaded' && !mediaFile)) && (
+                  <div className="p-3 bg-green-900/30 border border-green-500/50 rounded-lg">
+                    <p className="text-sm text-green-300">
+                      {postFlowStep === 'complete' ? "Post created successfully!" : "Processing..."}
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -776,6 +1228,22 @@ function DiscoverPageContent() {
         onClose={() => setIsSidebarOpen(false)}
       />
       <MobileBottomNav />
+
+      {/* Error Modal */}
+      <ErrorModal
+        open={errorModal.open}
+        onClose={() => setErrorModal({ open: false, message: '' })}
+        message={errorModal.message}
+        details={errorModal.details}
+        balanceInfo={errorModal.balanceInfo}
+      />
+
+      {/* Success Modal */}
+      <SuccessModal
+        open={successModal.open}
+        onClose={() => setSuccessModal({ open: false, message: '' })}
+        message={successModal.message}
+      />
     </div>
   );
 }
