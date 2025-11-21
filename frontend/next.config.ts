@@ -14,6 +14,10 @@ const nextConfig: NextConfig = {
       },
     ],
   },
+  // Walrus SDK configuration for Next.js
+  // Reference: https://sdk.mystenlabs.com/walrus
+  // When using walrus in API routes, tell next.js to skip bundling for the walrus packages
+  serverExternalPackages: ['@mysten/walrus', '@mysten/walrus-wasm'],
   // Suppress the lockfile warning by explicitly setting the root
   experimental: {
     // turbo: {
