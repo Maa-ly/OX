@@ -366,9 +366,12 @@ export async function uploadMediaToWalrus(file: File): Promise<{ blobId: string;
 }
 
 /**
- * Store a post on Walrus via backend API
+ * Store a post on Walrus using user's wallet (TypeScript SDK)
  * 
- * Posts are stored as JSON objects on Walrus with the following structure:
+ * Posts are stored as JSON objects on Walrus using the Mysten Labs TypeScript SDK.
+ * Users pay with WAL tokens from their own wallets.
+ * 
+ * Posts structure:
  * - content: text content
  * - mediaType: "image" | "video" | "text"
  * - mediaBlobId: Walrus blob ID for media (if applicable)
@@ -378,26 +381,65 @@ export async function uploadMediaToWalrus(file: File): Promise<{ blobId: string;
  * - timestamp: Unix timestamp
  * 
  * @param post - Post object to store
- * @param mediaFile - Optional file to upload to Walrus
+ * @param options - Options including wallet and optional mediaFile
  * @returns Promise with stored post including blob ID
  */
 export async function storePost(
   post: Omit<Post, 'id' | 'blobId' | 'likes' | 'comments'>,
-  mediaFile?: File
+  options?: {
+    wallet?: any; // WalletAdapter from walrus-sdk.ts
+    mediaFile?: File;
+  }
 ): Promise<StoredPost> {
-  // First, upload media file to Walrus if provided
+  // Import the SDK function
+  const { storeContributionWithUserWallet, storeBlobWithUserWallet } = await import('./walrus-sdk');
+  
+  // Handle backward compatibility - if no options, throw error
+  if (!options?.wallet) {
+    throw new Error('Wallet is required. Please connect your wallet first and pass it as: storePost(post, { wallet, mediaFile })');
+  }
+  
+  const { wallet, mediaFile } = options;
+  
+  if (!wallet || !wallet.connected || !wallet.account?.address) {
+    throw new Error('Wallet not connected. Please connect your wallet first.');
+  }
+
+  console.log('[storePost] Starting post storage with TypeScript SDK...', {
+    hasWallet: !!wallet,
+    walletAddress: wallet.account?.address,
+    hasMediaFile: !!mediaFile,
+    postContent: post.content?.substring(0, 50),
+  });
+
+  // First, upload media file to Walrus if provided (user pays with their wallet)
   let mediaBlobId: string | undefined;
   let mediaUrl: string | undefined;
 
   if (mediaFile) {
     try {
-      const uploadResult = await uploadMediaToWalrus(mediaFile);
+      console.log('[storePost] Uploading media file using SDK...');
+      // Convert file to Uint8Array
+      const arrayBuffer = await mediaFile.arrayBuffer();
+      const blob = new Uint8Array(arrayBuffer);
+      
+      // Store media blob using user's wallet
+      const uploadResult = await storeBlobWithUserWallet(blob, wallet, {
+        permanent: true,
+        epochs: 365,
+      });
+      
       mediaBlobId = uploadResult.blobId;
-      // For now, we'll still store a preview URL. In production, you'd read from Walrus
-      // For display, we can use the blob ID to fetch from Walrus
       mediaUrl = `${API_BASE_URL}/api/walrus/read/${mediaBlobId}`;
-    } catch (error) {
-      console.error('Failed to upload media to Walrus:', error);
+      console.log('[storePost] Media uploaded successfully:', mediaBlobId);
+    } catch (error: any) {
+      console.error('[storePost] Error uploading media:', error);
+      // Check if it's a balance error
+      if (error.message?.includes('insufficient') || 
+          error.message?.includes('WAL') ||
+          error.message?.includes('balance')) {
+        throw new Error('You need WAL tokens to store this media. Please get WAL tokens first (exchange SUI for WAL).');
+      }
       throw error;
     }
   } else if (post.mediaUrl) {
@@ -407,8 +449,10 @@ export async function storePost(
 
   // Create post object for storage
   const postData = {
+    post_type: 'discover_post',
+    engagement_type: 'post',
     content: post.content,
-    mediaType: post.mediaType,
+    mediaType: post.mediaType || 'text',
     mediaUrl: mediaUrl,
     mediaBlobId: mediaBlobId,
     ipTokenIds: post.ipTokenIds,
@@ -416,24 +460,99 @@ export async function storePost(
     authorAddress: post.authorAddress,
     timestamp: post.timestamp || Date.now(),
     tags: post.tags || [],
+    likes: 0,
+    comments: 0,
+    likesList: [],
+    commentsList: [],
   };
 
-  // Store post on Walrus via backend posts API
-  const response = await fetch(`${API_BASE_URL}/api/posts`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(postData),
-  });
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: 'Unknown error' }));
-    throw new Error(error.error || `Failed to store post: ${response.statusText}`);
+  // Store post on Walrus using user's wallet - USER PAYS with WAL tokens
+  // Using Mysten Labs TypeScript SDK (@mysten/walrus)
+  let blobId: string;
+  try {
+    console.log('[storePost] Storing post using TypeScript SDK...', {
+      postType: postData.post_type,
+      authorAddress: postData.authorAddress,
+      hasMedia: !!mediaBlobId,
+      contentLength: postData.content?.length,
+      ipTokenIds: postData.ipTokenIds,
+    });
+    
+    // Use Walrus TypeScript SDK - user pays with WAL tokens from their wallet
+    const result = await storeContributionWithUserWallet(postData, wallet, {
+      permanent: true,
+      epochs: 365,
+    });
+    
+    blobId = result.blobId;
+    console.log('[storePost] Post stored successfully on Walrus:', blobId);
+  } catch (walrusError: any) {
+    console.error('[storePost] Error storing post on Walrus:', {
+      error: walrusError,
+      message: walrusError?.message,
+      stack: walrusError?.stack,
+      name: walrusError?.name,
+      fullError: JSON.stringify(walrusError, Object.getOwnPropertyNames(walrusError)),
+    });
+    
+    // Only check for specific balance errors (with WAL token mention)
+    const errorMessage = walrusError?.message || String(walrusError);
+    const errorLower = errorMessage.toLowerCase();
+    
+    // Only show WAL token error if it's specifically about WAL tokens
+    if (errorLower.includes('insufficient') && (errorLower.includes('wal') || errorLower.includes('walrus token'))) {
+      throw new Error('You need WAL tokens to store this post. Please get WAL tokens first (exchange SUI for WAL).');
+    }
+    
+    // Re-throw the original error so we can see what it actually is
+    // This will show the real error message from the SDK
+    throw walrusError;
   }
 
-  const result = await response.json();
-  return result;
+  // Notify backend to index the post (backend doesn't store, just indexes)
+  try {
+    console.log('[storePost] Indexing post on backend...', { blobId });
+    const response = await fetch(`${API_BASE_URL}/api/posts/index`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        blobId,
+        post: postData,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+      console.error('[storePost] Backend indexing failed:', error);
+      throw new Error(error.error || 'Failed to index post');
+    }
+
+    const result = await response.json();
+    console.log('[storePost] Post indexed successfully');
+    return {
+      success: true,
+      post: {
+        id: blobId,
+        blobId,
+        ...postData,
+      },
+      blobId,
+    };
+  } catch (indexError: any) {
+    console.error('[storePost] Error indexing post:', indexError);
+    // Post was stored but indexing failed - still return success since storage succeeded
+    return {
+      success: true,
+      post: {
+        id: blobId,
+        blobId,
+        ...postData,
+      },
+      blobId,
+    };
+  }
 }
 
 /**

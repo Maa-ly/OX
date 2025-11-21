@@ -173,8 +173,17 @@ function DiscoverPageContent() {
         tags: [], // Can be extracted from content or added later
       };
 
-      // Store post on Walrus (with media file if present)
-      const result = await storePost(postData, mediaFile || undefined);
+      // Store post on Walrus using user's wallet (with media file if present)
+      // Users pay with WAL tokens from their own wallets using TypeScript SDK
+      if (!wallet || !wallet.connected || !wallet.account?.address) {
+        alert("Please connect your wallet to post");
+        return;
+      }
+      
+      const result = await storePost(postData, {
+        wallet,
+        mediaFile: mediaFile || undefined,
+      });
 
       // Reload posts to get the latest
       await loadPosts();
@@ -191,9 +200,18 @@ function DiscoverPageContent() {
       }
 
       alert("Post created successfully! Stored on Walrus.");
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to create post:", error);
-      alert("Failed to create post. Please try again.");
+      console.error("Error details:", {
+        message: error?.message,
+        stack: error?.stack,
+        name: error?.name,
+        error: error,
+      });
+      
+      // Show detailed error message to user
+      const errorMessage = error?.message || String(error) || "Unknown error occurred";
+      alert(`Failed to create post: ${errorMessage}\n\nCheck the browser console for more details.`);
     } finally {
       setSubmitting(false);
     }

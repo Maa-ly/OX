@@ -9,6 +9,8 @@ import { SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
 import { getFullnodeUrl } from '@mysten/sui/client';
 import { walrus } from '@mysten/walrus';
 import { Transaction } from '@mysten/sui/transactions';
+import { SuiClient } from '@mysten/sui/client';
+import { WalrusFile } from '@mysten/walrus';
 
 /**
  * Wallet adapter interface compatible with Suiet Wallet Kit
@@ -96,82 +98,120 @@ export async function storeBlobWithUserWallet(
   const epochs = options.epochs || 365;
   const deletable = options.deletable ?? !options.permanent;
 
-  // The SDK needs a Signer that implements getAddress() and signTransactionBlock()
-  // Check if wallet has signTransactionBlock (just signs) or signAndExecuteTransactionBlock (signs and executes)
+  // Get the wallet address synchronously (required by SDK)
+  const walletAddress = wallet.account?.address || '';
+  if (!walletAddress) {
+    throw new Error('Cannot get wallet address - wallet not connected');
+  }
+
+  // Create a Sui client for transaction building/serialization
+  const suiClient = new SuiClient({
+    url: getFullnodeUrl(network),
+  });
+
+  // Create a Signer object - build transactions manually and pass them to wallet
+  // This avoids the cloning issue by building transactions before passing them
   const signer = {
-    getAddress: async () => {
-      if (wallet.account?.address) {
-        return wallet.account.address;
+    toSuiAddress: () => walletAddress,
+    
+    signAndExecuteTransaction: async (txb: Transaction | any) => {
+      // Build the transaction BEFORE passing to wallet adapter
+      // This ensures it's in a format the wallet adapter can handle
+      if (!txb) {
+        throw new Error('Transaction object is null or undefined');
       }
-      // Fallback to getAddress method if available
-      if (wallet.getAddress) {
-        return await wallet.getAddress();
+
+      console.log('[storeBlobWithUserWallet] Building transaction...', {
+        hasBuild: typeof txb.build === 'function',
+        hasSetSender: typeof txb.setSender === 'function',
+      });
+
+      // Set sender if possible
+      if (typeof txb.setSender === 'function') {
+        try {
+          txb.setSender(walletAddress);
+        } catch (e) {
+          // Sender might already be set
+        }
       }
-      throw new Error('Cannot get wallet address');
-    },
-    // The SDK expects signTransactionBlock that just signs (doesn't execute)
-    // If wallet has signTransactionBlock, use it directly
-    // Otherwise, adapt from signAndExecuteTransactionBlock
-    signTransactionBlock: async (txb: Transaction) => {
-      // Check if wallet has signTransactionBlock (sign only)
-      if (wallet.signTransactionBlock) {
-        return await wallet.signTransactionBlock({
-          transactionBlock: txb as any,
-        });
+
+      // Build the transaction
+      let transactionForWallet = txb;
+      if (typeof txb.build === 'function') {
+        try {
+          transactionForWallet = await txb.build({ client: suiClient });
+          console.log('[storeBlobWithUserWallet] Transaction built successfully');
+        } catch (buildError: any) {
+          console.error('[storeBlobWithUserWallet] Error building transaction:', buildError);
+          // If build fails, try passing the original transaction
+          transactionForWallet = txb;
+        }
       }
-      
-      // If wallet only has signAndExecuteTransactionBlock, we need to use it
-      // But the SDK expects just signing. We'll execute and return the signature
-      // This is not ideal but works if the wallet doesn't support sign-only
+
+      // Pass the built transaction to wallet adapter
       const result = await wallet.signAndExecuteTransactionBlock({
-        transactionBlock: txb as any,
+        transactionBlock: transactionForWallet as any,
         options: {
           showEffects: true,
           showObjectChanges: true,
         },
       });
-      
-      // The SDK expects { bytes: Uint8Array, signature: SerializedSignature }
-      // We already executed, so return the signature from result
-      // Note: This means the transaction is already executed, which might cause issues
-      // The SDK might try to execute again. We may need to handle this differently.
+
       return {
-        bytes: result.bytes || new Uint8Array(),
-        signature: result.signature || result.digest || '',
-      } as any;
+        digest: result.digest,
+        signature: result.signature,
+        bytes: result.bytes,
+        effects: result.effects,
+        objectChanges: result.objectChanges,
+      };
     },
   };
 
-  // Use writeBlob - user pays with WAL tokens
-  // The signer's address must have:
-  // - Sufficient SUI for gas (for registering and certifying the blob)
-  // - Sufficient WAL tokens for storage fees
   try {
+    console.log('[storeBlobWithUserWallet] Calling SDK writeBlob...', {
+      blobSize: blob.length,
+      epochs,
+      deletable,
+      network,
+      address: walletAddress,
+    });
+    
     const result = await (client as any).walrus.writeBlob({
       blob,
       epochs,
       deletable,
-      signer: signer as any, // SDK expects Signer type from @mysten/sui
+      signer: signer as any,
     });
+
+    console.log('[storeBlobWithUserWallet] SDK writeBlob success:', result);
+    
+    if (!result?.blobId) {
+      throw new Error('SDK writeBlob returned no blobId. Response: ' + JSON.stringify(result));
+    }
 
     return {
       blobId: result.blobId,
     };
   } catch (error: any) {
-    // Provide better error messages
-    const errorMessage = error?.message || String(error);
+    console.error('[storeBlobWithUserWallet] SDK writeBlob error:', {
+      error,
+      message: error?.message,
+      stack: error?.stack,
+    });
     
-    // Check for common errors
-    if (errorMessage.includes('insufficient') || errorMessage.includes('balance')) {
-      throw new Error(`Insufficient balance: Your wallet needs WAL tokens to store on Walrus. Please exchange SUI for WAL tokens first. Error: ${errorMessage}`);
+    const errorMessage = error?.message || String(error);
+    const errorString = errorMessage.toLowerCase();
+    
+    if ((errorString.includes('insufficient') && errorString.includes('wal')) || 
+        (errorString.includes('insufficient') && errorString.includes('balance') && errorString.includes('wal'))) {
+      throw new Error(`Insufficient WAL balance: Your wallet needs WAL tokens to store on Walrus. Please exchange SUI for WAL tokens first.`);
     }
     
     if (errorMessage.includes('user rejected') || errorMessage.includes('User rejected')) {
       throw new Error('Transaction was rejected by the user.');
     }
     
-    // Re-throw with context
-    throw new Error(`Failed to store blob on Walrus: ${errorMessage}. Make sure your wallet has WAL tokens and SUI for gas fees.`);
+    throw error;
   }
 }
 

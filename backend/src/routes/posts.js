@@ -25,86 +25,95 @@ const upload = multer({
 });
 
 /**
- * Store a new post
- * POST /api/posts
+ * Index a post that was already stored on Walrus by the user
+ * Users now store directly using the Walrus SDK and pay with their own WAL tokens
+ * POST /api/posts/index
  */
-router.post('/', async (req, res, next) => {
+router.post('/index', async (req, res, next) => {
   try {
-    const {
-      content,
-      mediaType,
-      mediaUrl,
-      mediaBlobId,
-      ipTokenIds,
-      author,
-      authorAddress,
-      tags,
-    } = req.body;
+    const { blobId, post } = req.body;
 
-    if (!content || !ipTokenIds || !Array.isArray(ipTokenIds) || ipTokenIds.length === 0) {
+    if (!blobId) {
       return res.status(400).json({
         success: false,
-        error: 'Content and at least one IP token ID are required',
+        error: 'blobId is required',
       });
     }
 
-    if (!authorAddress) {
+    if (!post?.ipTokenIds || !Array.isArray(post.ipTokenIds) || post.ipTokenIds.length === 0) {
       return res.status(400).json({
         success: false,
-        error: 'Author address is required',
+        error: 'post.ipTokenIds (array with at least one IP token ID) is required',
       });
     }
 
-    logger.info(`Storing post from ${authorAddress} for IP tokens: ${ipTokenIds.join(', ')}`);
+    logger.info(`Indexing post for IP tokens: ${post.ipTokenIds.join(', ')}, blobId: ${blobId}`);
 
-    // Create post object
-    const post = {
-      post_type: 'discover_post',
-      engagement_type: 'post',
-      content,
-      mediaType: mediaType || 'text',
-      mediaUrl,
-      mediaBlobId,
-      ipTokenIds,
-      author: author || authorAddress.slice(0, 6) + '...' + authorAddress.slice(-4),
-      authorAddress,
-      timestamp: Date.now(),
-      tags: tags || [],
-      likes: 0,
-      comments: 0,
-      likesList: [], // Array of wallet addresses who liked
-      commentsList: [], // Array of comment objects
-    };
-
-    // Store post on Walrus
-    const stored = await walrusService.storeContribution(post);
-
-    // Index the post for each IP token
-    for (const ipTokenId of ipTokenIds) {
+    // Index the post for each IP token (already stored on Walrus by user)
+    for (const ipTokenId of post.ipTokenIds) {
       await indexerService.indexContribution(
         ipTokenId,
-        stored.walrus_blob_id || stored.walrus_cid,
+        blobId,
         {
           post_type: 'discover_post',
-          mediaType: post.mediaType,
-          timestamp: post.timestamp,
+          engagement_type: 'post',
+          mediaType: post.mediaType || 'text',
+          timestamp: post.timestamp || Date.now(),
+          authorAddress: post.authorAddress,
+          ...post,
         }
       );
     }
 
-    logger.info(`Post stored successfully: ${stored.walrus_blob_id || stored.walrus_cid}`);
-
     res.json({
       success: true,
+      blobId,
+      indexed: true,
       post: {
-        id: stored.walrus_blob_id || stored.walrus_cid,
-        blobId: stored.walrus_blob_id || stored.walrus_cid,
         ...post,
+        walrus_blob_id: blobId,
+        walrus_cid: blobId,
+        blobId,
+        id: blobId,
       },
-      blobId: stored.walrus_blob_id || stored.walrus_cid,
     });
   } catch (error) {
-    logger.error('Error storing post:', error);
+    logger.error('Error indexing post:', error);
+    next(error);
+  }
+});
+
+/**
+ * Store a new post (LEGACY - kept for backward compatibility)
+ * POST /api/posts
+ * 
+ * NOTE: This endpoint is deprecated and disabled.
+ * Frontend MUST use Walrus TypeScript SDK directly via storePost() function.
+ * Users must store posts using the SDK and pay with WAL tokens from their own wallets.
+ * 
+ * This endpoint now only redirects to /api/posts/index if a blobId is provided.
+ */
+router.post('/', async (req, res, next) => {
+  try {
+    // If blobId is provided, treat as index request (legacy compatibility)
+    if (req.body.blobId) {
+      logger.info('Legacy /api/posts called with blobId, redirecting to /index');
+      // Forward to index endpoint
+      req.url = '/index';
+      return router.handle(req, res, next);
+    }
+    
+    // Otherwise, return error - frontend must use TypeScript SDK
+    logger.warn(`Deprecated: /api/posts endpoint called without blobId. Frontend must use Walrus TypeScript SDK.`);
+    
+    return res.status(400).json({
+      success: false,
+      error: 'Backend storage is disabled. Please use the Walrus TypeScript SDK on the frontend to store posts. Users must pay with WAL tokens from their own wallets.',
+      details: 'Use storePost() from @/lib/utils/walrus with wallet parameter in the frontend. This function uses the Mysten Labs TypeScript SDK (@mysten/walrus) and stores posts directly on Walrus. After storing, it automatically calls /api/posts/index to index the post.',
+      fix: 'The frontend should call: storePost(postData, { wallet, mediaFile }). The storePost function uses the TypeScript SDK to store directly on Walrus, then calls /api/posts/index with the blobId.',
+    });
+  } catch (error) {
+    logger.error('Error in deprecated /api/posts endpoint:', error);
     next(error);
   }
 });
