@@ -179,36 +179,16 @@ pnpm test
 ## Project Structure
 
 ```
-backend/
-├── src/
-│   ├── server.js              # Express server setup
-│   ├── config/
-│   │   └── config.js          # Configuration loader
-│   ├── routes/
-│   │   ├── health.js          # Health check routes
-│   │   ├── oracle.js          # Oracle operation routes
-│   │   ├── metrics.js         # Metrics routes
-│   │   └── walrus.js          # Walrus operation routes
-│   ├── services/
-│   │   ├── walrus.js          # Walrus operations (store, read, certify)
-│   │   ├── walrus-indexer.js  # Contribution indexing service
-│   │   ├── verification.js    # Signature verification service
-│   │   ├── aggregation.js     # Metrics aggregation service
-│   │   ├── sui.js             # Sui smart contract interface
-│   │   └── scheduler.js       # Scheduled update service
-│   ├── middleware/
-│   │   ├── errorHandler.js    # Error handling middleware
-│   │   └── notFoundHandler.js # 404 handler
-│   └── utils/
-│       └── logger.js          # Logging utilities
-├── tests/                     # Test files
-├── data/                      # Local data storage (gitignored)
-├── .env                       # Environment variables (gitignored)
-├── .env.example               # Example environment file
-├── package.json
-├── pnpm-workspace.yaml        # pnpm workspace config
-├── .npmrc                     # pnpm configuration
-└── README.md
+OX/
+├── backend/                   # Backend API service
+│   ├── src/
+│   │   ├── server.js          # Express server setup
+│   │   ├── routes/            # API routes
+│   │   ├── services/          # Business logic services
+│   │   └── utils/             # Utilities
+│   └── README.md
+├── frontend/                  # Frontend application
+└── smartcontract/             # Sui smart contracts
 ```
 
 ## Walrus Integration

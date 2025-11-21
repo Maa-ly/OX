@@ -20,6 +20,9 @@ importers:
       '@mysten/sui.js':
         specifier: ^0.46.1
         version: 0.46.1
+      '@mysten/walrus':
+        specifier: ^0.8.4
+        version: 0.8.4(typescript@5.9.3)
       '@mysten/zklogin':
         specifier: ^0.8.1
         version: 0.8.1(typescript@5.9.3)
@@ -980,6 +983,12 @@ packages:
 
   '@mysten/wallet-standard@0.8.10':
     resolution: {integrity: sha512-hKXBjOZk3uttckOCO4dYlMcQtCvcm/IDNJ2qHsGB5jP/DTlgqDWhgaSihhfpI9bXNATF9YG1vyVhL65Qh1JTwA==}
+
+  '@mysten/walrus-wasm@0.1.1':
+    resolution: {integrity: sha512-j+12gNbPAIkgY7g1d4aCF2rXDpgTLQsyjEdu0s7A8xlu/95u5quP7Tc7Jz7VLFfbtkJigBpGyPZ/8J2tZv4cJA==}
+
+  '@mysten/walrus@0.8.4':
+    resolution: {integrity: sha512-6pvp9/s0jHJb9uR6QjX8yCyzb0PbceOqylnUwNuMKvVG/cyHYgHSRlB4atQMJPHPPtspGnIYH53J5j+zd9+4/Q==}
 
   '@mysten/window-wallet-core@0.0.2':
     resolution: {integrity: sha512-u57gHFlLYPDTK5bDeabRjkIdyLaiFVwL3bVbnBtu5WJpfFOv/KMOpIQt4820ICBG843jN35tzlulQ0nlbWCYeA==}
@@ -2168,6 +2177,9 @@ packages:
   data-view-byte-offset@1.0.1:
     resolution: {integrity: sha512-BS8PfmtDGnrgYdOonGZQdLZslWIeCGFP9tpan0hi1Co2Zr2NKADsvGYA8XxuG/4UWgJ6Cjtv+YJnB6MM69QGlQ==}
     engines: {node: '>= 0.4'}
+
+  dataloader@2.2.3:
+    resolution: {integrity: sha512-y2krtASINtPFS1rSDjacrFgn1dcUuoREVabwlOGOe4SdxenREqwjwjElAdwvbGM7kgZz9a3KVicWR7vcz8rnzA==}
 
   debug@3.2.7:
     resolution: {integrity: sha512-CFjzYYAi4ThfiQvizrFQevTTXHtnCqWfe7x1AhgEscTz6ZbLbfoLRLPugTQyBth6f8ZERVUSyWHFD/7Wu4t1XQ==}
@@ -4840,6 +4852,20 @@ snapshots:
       '@mysten/sui.js': 0.47.0
       '@wallet-standard/core': 1.0.3
 
+  '@mysten/walrus-wasm@0.1.1': {}
+
+  '@mysten/walrus@0.8.4(typescript@5.9.3)':
+    dependencies:
+      '@mysten/bcs': 1.9.2
+      '@mysten/sui': 1.45.0(typescript@5.9.3)
+      '@mysten/utils': 0.2.0
+      '@mysten/walrus-wasm': 0.1.1
+      dataloader: 2.2.3
+    transitivePeerDependencies:
+      - '@gql.tada/svelte-support'
+      - '@gql.tada/vue-support'
+      - typescript
+
   '@mysten/window-wallet-core@0.0.2':
     dependencies:
       '@mysten/utils': 0.0.0
@@ -6124,6 +6150,8 @@ snapshots:
       call-bound: 1.0.4
       es-errors: 1.3.0
       is-data-view: 1.0.2
+
+  dataloader@2.2.3: {}
 
   debug@3.2.7:
     dependencies:

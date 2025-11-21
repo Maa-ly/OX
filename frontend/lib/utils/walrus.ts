@@ -122,15 +122,18 @@ export interface BlobStatus {
 /**
  * Store a contribution on Walrus via backend API
  * 
- * The backend will:
- * 1. Store the contribution on Walrus (permanent blob, 365 epochs)
- * 2. Index it by IP token ID
- * 3. Return the Walrus CID
+ * ⚠️ DEPRECATED: This function is deprecated. Use storeContributionWithUserWallet from walrus-sdk.ts instead.
+ * Users should pay with WAL tokens from their own wallets using the TypeScript SDK.
  * 
+ * This function is kept for backward compatibility but will be removed in a future version.
+ * 
+ * @deprecated Use storeContributionWithUserWallet from '@/lib/utils/walrus-sdk' instead
  * @param contribution - Signed contribution object
  * @returns Promise with stored contribution including blob ID
  */
 export async function storeContribution(contribution: Record<string, any>): Promise<StoredContribution> {
+  console.warn('⚠️ storeContribution is deprecated. Use storeContributionWithUserWallet from walrus-sdk.ts instead. Users should pay with WAL tokens from their wallets.');
+  
   const response = await fetch(`${API_BASE_URL}/api/oracle/contributions`, {
     method: 'POST',
     headers: {

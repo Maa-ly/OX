@@ -59,7 +59,66 @@ router.get('/contributions/:ipTokenId', async (req, res, next) => {
   }
 });
 
-// Store a new contribution
+// Index a contribution that was already stored on Walrus by the user
+// Users now store directly using the Walrus SDK and pay with their own WAL tokens
+router.post('/index-contribution', async (req, res, next) => {
+  try {
+    const { blobId, contribution } = req.body;
+
+    if (!blobId) {
+      return res.status(400).json({
+        success: false,
+        error: 'blobId is required',
+      });
+    }
+
+    if (!contribution?.ip_token_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'contribution.ip_token_id is required',
+      });
+    }
+
+    logger.info(`Indexing contribution for IP token: ${contribution.ip_token_id}, blobId: ${blobId}`);
+
+    // Index the contribution (already stored on Walrus by user)
+    await indexerService.indexContribution(
+      contribution.ip_token_id,
+      blobId,
+      {
+        engagement_type: contribution.engagement_type,
+        timestamp: contribution.timestamp || Date.now(),
+        user_wallet: contribution.user_wallet,
+        signature: contribution.signature,
+        ...contribution,
+      }
+    );
+
+    if (metricsCollector) {
+      metricsCollector.counters.oracle.contributionsStored += 1;
+    }
+
+    res.json({
+      success: true,
+      blobId,
+      indexed: true,
+      contribution: {
+        ...contribution,
+        walrus_blob_id: blobId,
+        walrus_cid: blobId,
+        blobId,
+      },
+    });
+  } catch (error) {
+    if (metricsCollector) {
+      metricsCollector.counters.oracle.contributionErrors += 1;
+    }
+    next(error);
+  }
+});
+
+// Store a new contribution (LEGACY - kept for backward compatibility)
+// NOTE: This endpoint now only indexes. Frontend should use Walrus SDK directly to store.
 router.post('/contributions', async (req, res, next) => {
   try {
     const contribution = req.body;
@@ -71,21 +130,19 @@ router.post('/contributions', async (req, res, next) => {
       });
     }
 
-    logger.info(`Storing contribution for IP token: ${contribution.ip_token_id}`);
-
-    // Store on Walrus
-    const stored = await walrusService.storeContribution(contribution);
-
-    // Index the contribution
-    await indexerService.indexContribution(
-      contribution.ip_token_id,
-      stored.blobId,
-      {
-        engagement_type: contribution.engagement_type,
-        timestamp: contribution.timestamp || Date.now(),
-        user_wallet: contribution.user_wallet,
-      }
-    );
+    logger.warn(`Deprecated: /contributions endpoint called. Frontend should use Walrus SDK directly.`);
+    logger.error(`Backend storage is disabled. Users must store contributions using the Walrus TypeScript SDK on the frontend.`);
+    
+    // Backend no longer stores contributions - users must use the SDK
+    // Frontend should:
+    // 1. Store using storeContributionWithUserWallet from @/lib/utils/walrus-sdk
+    // 2. Then call /api/oracle/index-contribution with the blobId
+    return res.status(400).json({
+      success: false,
+      error: 'Backend storage is disabled. Please use the Walrus TypeScript SDK on the frontend to store contributions. Users must pay with WAL tokens from their own wallets.',
+      details: 'Use storeContributionWithUserWallet from @/lib/utils/walrus-sdk in the frontend instead. Then call /api/oracle/index-contribution to index the stored contribution.',
+      fix: 'The frontend should use the TypeScript SDK (storeContributionWithUserWallet) to store directly on Walrus, then call /api/oracle/index-contribution with the blobId.',
+    });
 
     if (metricsCollector) {
       metricsCollector.counters.oracle.contributionsStored += 1;

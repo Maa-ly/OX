@@ -21,29 +21,10 @@ export const config = {
     context: 'testnet',
     // HTTP API URLs
     // Reference: https://docs.wal.app/usage/web-api.html
-    // For production: Run your own publisher (see scripts/start-walrus-publisher.sh)
-    // Set WALRUS_PUBLISHER_URL environment variable to use your own publisher
     aggregatorUrl: process.env.WALRUS_AGGREGATOR_URL || 'https://aggregator.walrus-testnet.walrus.space',
     publisherUrl: process.env.WALRUS_PUBLISHER_URL || 'https://publisher.walrus-testnet.walrus.space',
     // Use HTTP API by default
     useHttpApi: true,
-    // IMPORTANT: How Walrus Payment Works:
-    // - HTTP API: The PUBLISHER's wallet pays, NOT the client's wallet
-    // - To have YOUR backend pay for user posts, you need to:
-    //   1. Run your own Walrus publisher with your wallet (recommended for production)
-    //   2. Fund YOUR publisher's wallet with WAL tokens (using ADMIN_PRIVATE_KEY wallet)
-    //   3. Point publisherUrl to your own publisher, not the public testnet one
-    //
-    // Public testnet publisher uses operator's wallet (may be out of funds)
-    // For production: Run your own publisher so YOUR wallet (ADMIN_PRIVATE_KEY) pays
-    //
-    // To fund YOUR wallet for running a publisher:
-    // 1. Ensure ADMIN_PRIVATE_KEY is set (same wallet used for contract operations)
-    // 2. Get Testnet SUI from faucet: sui client faucet
-    // 3. Exchange SUI for WAL: walrus get-wal (1:1 exchange rate, defaults to 0.5 SUI)
-    // 4. Check balance: sui client gas (shows all coins including WAL)
-    // Docs: https://docs.wal.app/usage/networks.html
-    // Publisher setup: https://docs.wal.app/operator-guide/publisher.html
   },
 
   // Nautilus Configuration

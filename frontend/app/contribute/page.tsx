@@ -6,7 +6,7 @@ import { useAuthStore } from "@/lib/stores/auth-store";
 import { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
 import { signContribution, createContribution } from "@/lib/utils/signing";
-import { storeContribution } from "@/lib/utils/walrus";
+import { storeContributionWithUserWallet } from "@/lib/utils/walrus-sdk";
 import { getIPTokens, type IPToken } from "@/lib/utils/api";
 import { CustomSelect } from "@/components/ui/custom-select";
 import { StarRating } from "@/components/ui/star-rating";
@@ -91,8 +91,38 @@ function ContributeContent() {
         signature,
       };
 
-      // Submit to backend API - this will store on Walrus
-      const result = await storeContribution(signedContribution);
+      // Store on Walrus using user's wallet - USER PAYS with WAL tokens
+      let blobId: string;
+      try {
+        // Use Walrus TypeScript SDK - user pays with WAL tokens from their wallet
+        const result = await storeContributionWithUserWallet(signedContribution, wallet);
+        blobId = result.blobId;
+      } catch (walrusError: any) {
+        // Check if it's a balance error
+        if (walrusError.message?.includes('insufficient') || 
+            walrusError.message?.includes('WAL') ||
+            walrusError.message?.includes('balance')) {
+          throw new Error('You need WAL tokens to store this contribution. Please get WAL tokens first (exchange SUI for WAL).');
+        }
+        throw walrusError;
+      }
+
+      // Notify backend to index the contribution (backend doesn't store, just indexes)
+      const result = await fetch(`${API_URL}/api/oracle/index-contribution`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          blobId,
+          contribution: signedContribution,
+        }),
+      });
+
+      if (!result.ok) {
+        const error = await result.json().catch(() => ({ error: 'Unknown error' }));
+        throw new Error(error.error || 'Failed to index contribution');
+      }
 
       // Reset form
       setRating(5);
@@ -100,18 +130,18 @@ function ContributeContent() {
       setReview("");
       setStake(0);
 
-      // Show success message with Walrus CID
-      const walrusCid =
-        result.contribution?.walrus_cid ||
-        result.contribution?.walrus_blob_id ||
-        result.contribution?.blobId ||
-        "N/A";
+      // Show success message with Walrus Blob ID
       alert(
-        `Contribution submitted successfully!\n\nWalrus Blob ID: ${walrusCid}\n\nYour contribution has been stored on Walrus decentralized storage and will be indexed by the oracle.`
+        `Contribution submitted successfully!\n\nWalrus Blob ID: ${blobId}\n\nYour contribution has been stored on Walrus using your wallet and will be indexed by the oracle.`
       );
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to submit contribution:", error);
-      alert("Failed to submit contribution. Please try again.");
+      const errorMessage = error.message || 'Failed to submit contribution. Please try again.';
+      if (errorMessage.includes('WAL tokens')) {
+        alert(`${errorMessage}\n\nTo get WAL tokens:\n1. Get Testnet SUI from the faucet\n2. Exchange SUI for WAL using 'walrus get-wal' command or a DEX\n3. Make sure your wallet has WAL tokens before submitting.`);
+      } else {
+        alert(errorMessage);
+      }
     } finally {
       setSubmitting(false);
     }

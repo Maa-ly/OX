@@ -20,7 +20,6 @@ import postsRoutes from './routes/posts.js';
 // Import services
 import { OracleScheduler } from './services/scheduler.js';
 import { MetricsCollectorService } from './services/metrics-collector.js';
-import { WalrusPublisherManager } from './services/walrus-publisher-manager.js';
 
 const app = express();
 const DEFAULT_PORT = parseInt(process.env.PORT || '3000', 10);
@@ -96,7 +95,6 @@ app.use(errorHandler);
 // Initialize scheduler and metrics collector
 let scheduler = null;
 let metricsCollector = null;
-let publisherManager = null;
 
 async function startServer() {
   try {
@@ -113,15 +111,6 @@ async function startServer() {
     // Initialize Metrics Collector
     metricsCollector = new MetricsCollectorService();
     logger.info('Metrics Collector initialized');
-    
-    // Initialize Walrus Publisher Manager (starts publisher daemon)
-    try {
-      publisherManager = new WalrusPublisherManager();
-      await publisherManager.start();
-    } catch (publisherError) {
-      logger.warn('Walrus publisher initialization failed:', publisherError.message);
-      logger.warn('Backend will continue but may need external publisher or CLI fallback');
-    }
     
     // Set metrics collector in routes
     const { setMetricsCollector: setOracleMetricsCollector } = await import('./routes/oracle.js');
@@ -168,11 +157,6 @@ async function startServer() {
 process.on('SIGINT', async () => {
   logger.info('Received SIGINT, shutting down gracefully...');
   
-  // Stop publisher manager
-  if (publisherManager) {
-    await publisherManager.stop();
-  }
-  
   // Stop scheduler
   if (scheduler) {
     await scheduler.stop();
@@ -184,11 +168,6 @@ process.on('SIGINT', async () => {
 
 process.on('SIGTERM', async () => {
   logger.info('Received SIGTERM, shutting down gracefully...');
-  
-  // Stop publisher manager
-  if (publisherManager) {
-    await publisherManager.stop();
-  }
   
   // Stop scheduler
   if (scheduler) {
