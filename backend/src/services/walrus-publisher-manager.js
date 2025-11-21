@@ -89,6 +89,20 @@ export class WalrusPublisherManager {
       logger.warn(`Could not create publisher wallets directory: ${error.message}`);
     }
 
+    // Check if publisher is already running on this port
+    try {
+      const { execSync } = await import('child_process');
+      const checkResult = execSync(`lsof -i :${port} 2>/dev/null || true`, { encoding: 'utf-8' });
+      if (checkResult.trim().includes('walrus') || checkResult.trim().includes('LISTEN')) {
+        logger.info(`Walrus publisher already running on port ${port}`);
+        logger.info(`Using existing publisher at ${publisherUrl}`);
+        this.isRunning = true; // Mark as running even though we didn't start it
+        return; // Don't start another one
+      }
+    } catch (error) {
+      // lsof might not be available, continue with starting
+    }
+    
     logger.info('Starting Walrus publisher daemon...');
     logger.info(`  Bind Address: ${bindAddress}`);
     logger.info(`  Wallets Dir: ${walletsDir}`);
