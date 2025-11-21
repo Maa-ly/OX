@@ -89,7 +89,7 @@ function createWalletSigner(wallet: WalletAdapter, network: 'testnet' | 'mainnet
       throw new Error('Unsupported transaction block type');
     },
     toSuiAddress: () => walletAddress,
-  } as Signer;
+  } as unknown as Signer;
 }
 
 /**
@@ -134,24 +134,32 @@ async function signAndExecuteTransaction({
     }
   }
 
-  // Don't build the transaction - pass it directly to the wallet adapter
-  // The wallet adapter should handle building it internally
-  // Building it first might change the format in a way that breaks compatibility
-  console.log('[signAndExecuteTransaction] Passing transaction directly to wallet (not building)...', {
+  // Build the transaction before passing it to the wallet
+  // The wallet adapter expects a built transaction (Uint8Array) or a Transaction that can be built
+  // The Transaction object from Walrus SDK has special properties ($Intent, $kind) that need to be built
+  console.log('[signAndExecuteTransaction] Building transaction before signing...', {
     transactionType: typeof transaction,
     isTransaction: transaction instanceof Transaction,
     transactionConstructor: transaction?.constructor?.name,
   });
 
   try {
+    // Create a SuiClient to build the transaction
+    const suiClient = new SuiClient({
+      url: getFullnodeUrl(network),
+    });
+
+    // Build the transaction
+    const builtTx = await transaction.build({ client: suiClient });
+    console.log('[signAndExecuteTransaction] Transaction built successfully, length:', builtTx.length);
+
     // Use the wallet adapter's signAndExecuteTransactionBlock method
-    // The parameter name is 'transactionBlock' for Suiet Wallet Kit
-    // Pass the Transaction object directly - the wallet adapter should handle building it
+    // Pass the built transaction (Uint8Array) to the wallet
     // This SHOULD trigger a wallet popup for the user to sign
     console.log('[signAndExecuteTransaction] Calling wallet.signAndExecuteTransactionBlock - wallet popup should appear now...');
     
     const result = await wallet.signAndExecuteTransactionBlock({
-      transactionBlock: transaction as any,
+      transactionBlock: builtTx,
       options: {
         showEffects: true,
         showObjectChanges: true,
@@ -279,6 +287,7 @@ export async function storeBlobWithUserWallet(
     // Step 1: Create WalrusFile and initialize the flow
     const file = WalrusFile.from({
       contents: blob,
+      identifier: 'blob.bin', // Required identifier for WalrusFile
     });
 
     const flow = (client as any).walrus.writeFilesFlow({
