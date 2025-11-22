@@ -12,6 +12,7 @@ import { Transaction } from '@mysten/sui/transactions';
 import { SuiClient } from '@mysten/sui/client';
 import { WalrusFile } from '@mysten/walrus';
 import type { Signer } from '@mysten/sui/cryptography';
+import { estimateWalrusCost } from './wal-balance';
 
 /**
  * Wallet adapter interface compatible with Suiet Wallet Kit and other wallet adapters
@@ -104,10 +105,12 @@ async function signAndExecuteTransaction({
   transaction,
   wallet,
   network = 'testnet',
+  estimatedCostMist,
 }: {
   transaction: Transaction;
   wallet: WalletAdapter;
   network?: 'testnet' | 'mainnet';
+  estimatedCostMist?: number; // Optional: estimated WAL cost in MIST for logging
 }): Promise<{ digest: string }> {
   if (!wallet || !wallet.connected || !wallet.account?.address) {
     throw new Error('Wallet not connected');
@@ -153,6 +156,62 @@ async function signAndExecuteTransaction({
     transactionConstructor: transaction?.constructor?.name,
   });
 
+  // First, verify WAL coins are accessible before attempting any transaction building
+  const suiClient = new SuiClient({
+    url: getFullnodeUrl(network),
+  });
+  
+  const WAL_COIN_TYPE = '0x8270feb7375eee355e64fdb69c50abb6b5f9393a722883c1cf45f8e26048810a::wal::WAL';
+  let walCoins: any[] = [];
+  let walBalance = BigInt(0);
+  
+  try {
+    // Check WAL balance and coin accessibility before building transaction
+    const balance = await suiClient.getBalance({
+      owner: walletAddress,
+      coinType: WAL_COIN_TYPE,
+    });
+    walBalance = BigInt(balance.totalBalance);
+    
+    // Get coin objects to verify they're accessible
+    const allCoins = await suiClient.getAllCoins({
+      owner: walletAddress,
+      coinType: WAL_COIN_TYPE,
+    });
+    walCoins = allCoins.data;
+    
+    const requiredWALFormatted = estimatedCostMist 
+      ? (Number(estimatedCostMist) / 1e9).toFixed(6)
+      : 'unknown';
+    
+    console.log('[signAndExecuteTransaction] Pre-build coin check:', {
+      walBalance: walBalance.toString(),
+      walBalanceFormatted: (Number(walBalance) / 1e9).toFixed(6),
+      requiredWAL: estimatedCostMist?.toString() || 'unknown',
+      requiredWALFormatted: requiredWALFormatted,
+      coinCount: walCoins.length,
+      coinObjects: walCoins.slice(0, 3).map(c => ({
+        id: c.coinObjectId,
+        balance: c.balance,
+      })),
+      sufficient: estimatedCostMist ? Number(walBalance) >= estimatedCostMist : 'unknown',
+    });
+    
+    if (walBalance === BigInt(0) || walCoins.length === 0) {
+      throw new Error(
+        `No WAL tokens found in wallet. ` +
+        `Please ensure you have WAL tokens and they are unlocked. ` +
+        `You can exchange SUI for WAL tokens using the Walrus CLI: 'walrus get-wal'`
+      );
+    }
+  } catch (preCheckError: any) {
+    console.error('[signAndExecuteTransaction] Pre-build coin check failed:', preCheckError);
+    // If it's a balance error, throw it; otherwise continue and let the transaction builder handle it
+    if (preCheckError?.message?.includes('No WAL tokens')) {
+      throw preCheckError;
+    }
+  }
+
   try {
     // Approach 1: Try letting the wallet build the transaction
     // This allows the wallet to properly select WAL coin objects from the user's wallet
@@ -160,6 +219,11 @@ async function signAndExecuteTransaction({
     console.log('[signAndExecuteTransaction] Attempting to let wallet build transaction (for proper coin selection)...');
     
     try {
+      // Ensure sender is set before passing to wallet
+      if (transaction instanceof Transaction && typeof transaction.setSender === 'function') {
+        transaction.setSender(walletAddress);
+      }
+      
       // Pass the Transaction object directly - let wallet handle building
       // This is important for WAL token selection as the wallet knows which coins are available
       const result = await wallet.signAndExecuteTransactionBlock({
@@ -180,17 +244,31 @@ async function signAndExecuteTransaction({
     } catch (walletBuildError: any) {
       // If wallet can't build Transaction object (e.g., "$Intent, $kind" error),
       // fall back to building it ourselves
+      const errorMsg = walletBuildError?.message || String(walletBuildError);
       console.warn('[signAndExecuteTransaction] Wallet couldn\'t build Transaction object, trying pre-built approach...', {
-        error: walletBuildError?.message,
+        error: errorMsg,
         errorName: walletBuildError?.name,
+        // Check if it's a coin selection error even in wallet build
+        isCoinError: errorMsg.includes('Not enough coins') || errorMsg.includes('satisfy requested balance'),
       });
       
+      // If wallet build failed due to coin selection, provide helpful error
+      if (errorMsg.includes('Not enough coins') || errorMsg.includes('satisfy requested balance')) {
+        const requiredInfo = estimatedCostMist 
+          ? `Transaction requires ${(Number(estimatedCostMist) / 1e9).toFixed(6)} WAL, but wallet has ${(Number(walBalance) / 1e9).toFixed(6)} WAL. `
+          : '';
+        throw new Error(
+          `Wallet couldn't select WAL tokens for transaction. ` +
+          requiredInfo +
+          `Wallet has ${walBalance.toString()} WAL tokens (${(Number(walBalance) / 1e9).toFixed(6)} WAL) across ${walCoins.length} coin object(s). ` +
+          `Please ensure your WAL tokens are unlocked and accessible in your wallet. ` +
+          `If the issue persists, try refreshing your wallet connection or splitting your WAL coins into smaller amounts.`
+        );
+      }
+      
       // Approach 2: Build the transaction ourselves and pass built bytes
-      // Create a SuiClient to build the transaction
-      const suiClient = new SuiClient({
-        url: getFullnodeUrl(network),
-      });
-
+      // We already have coin data from the pre-check above
+      
       // CRITICAL: Ensure the transaction has the sender set BEFORE building
       // The transaction builder needs the sender address to query for coins
       if (transaction instanceof Transaction && typeof transaction.setSender === 'function' && walletAddress) {
@@ -202,48 +280,20 @@ async function signAndExecuteTransaction({
         }
       }
 
-      // Query wallet's coins to verify they're accessible and get detailed info
-      // This helps debug coin selection issues
-      let walCoins: any[] = [];
-      let walBalance = BigInt(0);
-      try {
-        const allCoins = await suiClient.getAllCoins({
-          owner: walletAddress,
-        });
-        
-        // Get WAL coins specifically
-        walCoins = allCoins.data.filter(c => c.coinType.includes('wal::WAL'));
-        walBalance = walCoins.reduce((sum, coin) => sum + BigInt(coin.balance || 0), BigInt(0));
-        
-        // Also get WAL balance using getBalance
-        let walBalanceFromAPI = BigInt(0);
-        try {
-          const balance = await suiClient.getBalance({
-            owner: walletAddress,
-            coinType: '0x8270feb7375eee355e64fdb69c50abb6b5f9393a722883c1cf45f8e26048810a::wal::WAL',
-          });
-          walBalanceFromAPI = BigInt(balance.totalBalance);
-        } catch (balanceError) {
-          console.warn('[signAndExecuteTransaction] Could not get WAL balance:', balanceError);
-        }
-        
-        console.log('[signAndExecuteTransaction] Wallet coins query:', {
-          totalCoins: allCoins.data.length,
-          coinTypes: [...new Set(allCoins.data.map(c => c.coinType))].slice(0, 5),
-          hasWALCoins: walCoins.length > 0,
-          walCoinCount: walCoins.length,
-          walBalanceFromCoins: walBalance.toString(),
-          walBalanceFromAPI: walBalanceFromAPI.toString(),
-          walCoinObjects: walCoins.map(c => ({
-            objectId: c.coinObjectId,
-            balance: c.balance,
-          })).slice(0, 3), // Show first 3 coin objects
-        });
-      } catch (coinQueryError) {
-        console.warn('[signAndExecuteTransaction] Could not query wallet coins:', coinQueryError);
-      }
+      // Use coin data from pre-check (already queried above)
+      const requiredWALFormatted = estimatedCostMist 
+        ? (Number(estimatedCostMist) / 1e9).toFixed(6)
+        : 'unknown';
+      console.log('[signAndExecuteTransaction] Using pre-checked coin data:', {
+        walBalance: walBalance.toString(),
+        walBalanceFormatted: (Number(walBalance) / 1e9).toFixed(6),
+        requiredWAL: estimatedCostMist?.toString() || 'unknown',
+        requiredWALFormatted: requiredWALFormatted,
+        coinCount: walCoins.length,
+        sufficient: estimatedCostMist ? Number(walBalance) >= estimatedCostMist : 'unknown',
+      });
 
-      // Build the transaction
+      // Build the transaction with explicit coin selection support
       // The build() method will query coins for the sender address
       // It needs the sender to be set to know which address to query coins for
       console.log('[signAndExecuteTransaction] Building transaction with sender:', walletAddress);
@@ -255,26 +305,48 @@ async function signAndExecuteTransaction({
       
       let builtTx: Uint8Array;
       try {
+        // Try building with the client - it should automatically select coins
+        // The transaction builder queries coins using the sender address
         builtTx = await transaction.build({ 
           client: suiClient,
-          // The sender should already be set, but we can also pass it explicitly if needed
+          // Ensure the sender is set so coin selection works
+          // The build method will query coins for the sender
         });
         console.log('[signAndExecuteTransaction] Transaction built successfully, length:', builtTx.length);
       } catch (buildError: any) {
-        // If build fails with coin selection error, try to get more details
+        // If build fails with coin selection error, provide more helpful error message
+        const errorMsg = buildError?.message || String(buildError);
         console.error('[signAndExecuteTransaction] Transaction build failed:', {
-          error: buildError?.message,
+          error: errorMsg,
           errorName: buildError?.name,
           hasWALCoins: walCoins.length > 0,
           walBalance: walBalance.toString(),
+          walCoinCount: walCoins.length,
         });
         
-        // The error message might contain info about what's needed
-        // For now, re-throw with more context
+        // Check if it's a coin selection issue
+        if (errorMsg.includes('Not enough coins') || errorMsg.includes('satisfy requested balance')) {
+          // The transaction builder couldn't select enough coins
+          // This might be because:
+          // 1. Coins are locked/frozen in the wallet
+          // 2. The transaction requires more WAL than available
+          // 3. Coin selection algorithm issue
+          const requiredInfo = estimatedCostMist 
+            ? `Transaction requires ${(Number(estimatedCostMist) / 1e9).toFixed(6)} WAL, but wallet has ${(Number(walBalance) / 1e9).toFixed(6)} WAL. `
+            : '';
+          throw new Error(
+            `Failed to build transaction: Unable to select WAL tokens. ` +
+            requiredInfo +
+            `Wallet has ${walBalance.toString()} WAL tokens (${(Number(walBalance) / 1e9).toFixed(6)} WAL) across ${walCoins.length} coin object(s). ` +
+            `Please ensure your WAL tokens are unlocked and accessible in your wallet. ` +
+            `If the issue persists, try refreshing your wallet connection or splitting your WAL coins.`
+          );
+        }
+        
+        // Re-throw other errors with context
         throw new Error(
-          `Failed to build transaction: ${buildError?.message}. ` +
-          `Wallet has ${walBalance.toString()} WAL tokens across ${walCoins.length} coin objects. ` +
-          `This might be a coin selection issue. Please ensure your WAL tokens are unlocked and accessible.`
+          `Failed to build transaction: ${errorMsg}. ` +
+          `Wallet has ${walBalance.toString()} WAL tokens across ${walCoins.length} coin objects.`
         );
       }
 
@@ -483,6 +555,9 @@ export async function storeBlobWithUserWallet(
       throw new Error('Register transaction is null or undefined');
     }
 
+    // Calculate estimated cost for logging
+    const costEstimate = estimateWalrusCost(fileSize, epochs);
+    
     // Sign and execute the register transaction
     // This matches the docs pattern: signAndExecuteTransaction({ transaction: registerTx })
     console.log('[storeBlobWithUserWallet] Signing register transaction...', {
@@ -490,6 +565,8 @@ export async function storeBlobWithUserWallet(
       deletable,
       owner: walletAddress,
       blobSize: fileSize,
+      estimatedCost: costEstimate.estimatedCostWAL,
+      estimatedCostMist: costEstimate.estimatedCostMist,
     });
     
     // Log transaction details before signing to help debug WAL token issues
@@ -497,12 +574,15 @@ export async function storeBlobWithUserWallet(
       transactionType: typeof registerTx,
       isTransaction: registerTx instanceof Transaction,
       hasBuild: typeof registerTx?.build === 'function',
+      estimatedCost: costEstimate.estimatedCostWAL,
+      estimatedCostMist: costEstimate.estimatedCostMist,
     });
     
     const registerResult = await signAndExecuteTransaction({
       transaction: registerTx,
       wallet,
       network,
+      estimatedCostMist: costEstimate.estimatedCostMist,
     });
     
     console.log('[storeBlobWithUserWallet] Blob registered:', registerResult.digest);
@@ -524,11 +604,16 @@ export async function storeBlobWithUserWallet(
     
     // Sign and execute the certify transaction
     // Per docs: await signAndExecuteTransaction({ transaction: certifyTx })
-    console.log('[storeBlobWithUserWallet] Signing certify transaction...');
+    // Certify transaction typically costs less than register, but we'll use the same estimate for logging
+    console.log('[storeBlobWithUserWallet] Signing certify transaction...', {
+      estimatedCost: costEstimate.estimatedCostWAL,
+      estimatedCostMist: costEstimate.estimatedCostMist,
+    });
     const certifyResult = await signAndExecuteTransaction({
       transaction: certifyTx,
       wallet,
       network,
+      estimatedCostMist: costEstimate.estimatedCostMist, // Same estimate for logging
     });
     
     console.log('[storeBlobWithUserWallet] Blob certified:', certifyResult.digest);
@@ -635,15 +720,20 @@ export async function storeFilesWithUserWallet(
 
   try {
     // Step 1: Create WalrusFile objects following the documentation pattern
+    // Also calculate total file size for cost estimation
+    let totalFileSize = 0;
     const walrusFiles = files.map((file) => {
       let contents: Uint8Array | Blob;
       
       if (file.contents instanceof Blob) {
         contents = file.contents;
+        totalFileSize += file.contents.size;
       } else if (typeof file.contents === 'string') {
         contents = new TextEncoder().encode(file.contents);
+        totalFileSize += contents.length;
       } else {
         contents = file.contents;
+        totalFileSize += file.contents.length;
       }
 
       return WalrusFile.from({
@@ -653,6 +743,9 @@ export async function storeFilesWithUserWallet(
       });
     });
 
+    // Calculate estimated cost for logging
+    const costEstimate = estimateWalrusCost(totalFileSize, epochs);
+
     // Initialize the flow with multiple files
     // Writing multiple files together is more efficient (single quilt)
     const flow = (client as any).walrus.writeFilesFlow({
@@ -661,7 +754,11 @@ export async function storeFilesWithUserWallet(
 
     // Step 2: Encode the files
     await flow.encode();
-    console.log('[storeFilesWithUserWallet] Files encoded successfully');
+    console.log('[storeFilesWithUserWallet] Files encoded successfully', {
+      totalFileSize,
+      estimatedCost: costEstimate.estimatedCostWAL,
+      estimatedCostMist: costEstimate.estimatedCostMist,
+    });
 
     // Step 3: Register the blob
     const registerTx = flow.register({
@@ -678,6 +775,7 @@ export async function storeFilesWithUserWallet(
       transaction: registerTx,
       wallet,
       network,
+      estimatedCostMist: costEstimate.estimatedCostMist,
     });
     
     console.log('[storeFilesWithUserWallet] Blob registered:', registerResult.digest);
@@ -697,6 +795,7 @@ export async function storeFilesWithUserWallet(
       transaction: certifyTx,
       wallet,
       network,
+      estimatedCostMist: costEstimate.estimatedCostMist, // Same estimate for logging
     });
     
     console.log('[storeFilesWithUserWallet] Blob certified:', certifyResult.digest);
