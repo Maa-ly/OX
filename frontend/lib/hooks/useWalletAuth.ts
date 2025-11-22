@@ -48,18 +48,27 @@ export function useWalletAuth() {
     if (storeConnected && storeAddress && !wallet.connected) {
       // Store has wallet connection but wallet-kit doesn't
       // This can happen on page refresh - wallet-kit will reconnect automatically
-      console.log('[useWalletAuth] Store has connection but wallet-kit not connected yet. Waiting for reconnection...', {
-        storeAddress,
-        walletConnected: wallet.connected,
-      });
+      // Only log once per address change to reduce console spam
+      const logKey = `wallet-reconnect-log-${storeAddress}`;
+      const lastLogTime = sessionStorage.getItem(logKey);
+      const now = Date.now();
+      
+      if (!lastLogTime || now - parseInt(lastLogTime) > 5000) {
+        console.log('[useWalletAuth] Store has connection but wallet-kit not connected yet. Waiting for reconnection...', {
+          storeAddress,
+          walletConnected: wallet.connected,
+        });
+        sessionStorage.setItem(logKey, now.toString());
+      }
 
-      // Set a timeout to clear stale connection if wallet-kit doesn't reconnect within 5 seconds
+      // Set a timeout to clear stale connection if wallet-kit doesn't reconnect within 10 seconds
       const timeoutId = setTimeout(() => {
         if (!wallet.connected) {
-          console.warn('[useWalletAuth] Wallet-kit did not reconnect after 5 seconds. Clearing stale connection from store.');
+          console.warn('[useWalletAuth] Wallet-kit did not reconnect after 10 seconds. Clearing stale connection from store.');
           clearWalletAuth();
+          sessionStorage.removeItem(logKey);
         }
-      }, 5000);
+      }, 10000);
 
       return () => {
         clearTimeout(timeoutId);
