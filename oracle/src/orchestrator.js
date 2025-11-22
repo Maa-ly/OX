@@ -29,10 +29,8 @@ async function fetchExistingPosts(ipTokenId) {
   return seen;
 }
 
-async function storeContribution(contribution) {
-  const url = `${BACKEND_BASE_URL}/oracle/contributions`;
-  return postJson(url, contribution);
-}
+// Backend no longer stores contributions; users store via Walrus SDK.
+// Oracle focuses on aggregation + on-chain update.
 
 async function updateOnChain(ipTokenId, name) {
   const url = `${BACKEND_BASE_URL}/oracle/update/${ipTokenId}?includeExternal=true&name=${encodeURIComponent(name)}`;
@@ -42,20 +40,13 @@ async function updateOnChain(ipTokenId, name) {
 export async function runOnce() {
   const tokens = await fetchTokens();
   for (const token of tokens) {
-    const seen = await fetchExistingPosts(token.id);
-    let newContributions = [];
+    // Optional: still fetch external posts to measure potential engagement, but do not store.
+    // This can be used later for analytics or to drive external-only metrics via Nautilus.
     if (ENABLE_REDDIT) {
-      const reddit = await fetchRedditPosts(token.id, token.name, 25);
-      newContributions.push(...reddit.filter((c) => !seen.has(`${c.source}:${c.external_id}`)));
+      try { await fetchRedditPosts(token.id, token.name, 10); } catch {}
     }
     if (ENABLE_INSTAGRAM) {
-      const insta = await fetchInstagramPosts(token.id, token.name, 10);
-      newContributions.push(...insta.filter((c) => !seen.has(`${c.source}:${c.external_id}`)));
-    }
-    for (const c of newContributions) {
-      try {
-        await storeContribution(c);
-      } catch {}
+      try { await fetchInstagramPosts(token.id, token.name, 5); } catch {}
     }
     try {
       await updateOnChain(token.id, token.name);

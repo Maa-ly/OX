@@ -74,9 +74,8 @@ function updateEnvBackend(baseUrl) {
         }
       };
       setOrAdd('DISABLE_SCHEDULER', 'true');
-      setOrAdd('ENABLE_ONCHAIN', 'false');
       fs.writeFileSync(backendEnvPath, bcontent);
-      console.log('Updated backend .env: DISABLE_SCHEDULER=true, ENABLE_ONCHAIN=false');
+      console.log('Updated backend .env: DISABLE_SCHEDULER=true');
     }
   } catch (e) {
     console.log('Failed to update .env:', e.message);
