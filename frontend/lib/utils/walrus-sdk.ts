@@ -125,13 +125,22 @@ async function signAndExecuteTransaction({
 
   // Ensure the transaction has the sender set
   const walletAddress = wallet.account?.address;
-  if (transaction instanceof Transaction && typeof transaction.setSender === 'function' && walletAddress) {
+  if (!walletAddress) {
+    throw new Error('Wallet address not available');
+  }
+  
+  // CRITICAL: Set sender BEFORE any building attempts
+  // The transaction builder needs the sender to query for coins
+  if (transaction instanceof Transaction && typeof transaction.setSender === 'function') {
     try {
       transaction.setSender(walletAddress);
-      console.log('[signAndExecuteTransaction] Set sender on transaction');
+      console.log('[signAndExecuteTransaction] Set sender on transaction:', walletAddress);
     } catch (setSenderError: any) {
       console.warn('[signAndExecuteTransaction] Could not set sender:', setSenderError);
+      // Don't throw - some transactions might already have sender set
     }
+  } else {
+    console.warn('[signAndExecuteTransaction] Transaction does not have setSender method');
   }
 
   // Try two approaches:
@@ -182,10 +191,40 @@ async function signAndExecuteTransaction({
         url: getFullnodeUrl(network),
       });
 
+      // CRITICAL: Ensure the transaction has the sender set BEFORE building
+      // The transaction builder needs the sender address to query for coins
+      if (transaction instanceof Transaction && typeof transaction.setSender === 'function' && walletAddress) {
+        try {
+          transaction.setSender(walletAddress);
+          console.log('[signAndExecuteTransaction] Set sender on transaction before building:', walletAddress);
+        } catch (setSenderError: any) {
+          console.warn('[signAndExecuteTransaction] Could not set sender:', setSenderError);
+        }
+      }
+
+      // Query wallet's coins to verify they're accessible
+      // This helps debug coin selection issues
+      try {
+        const allCoins = await suiClient.getAllCoins({
+          owner: walletAddress,
+        });
+        console.log('[signAndExecuteTransaction] Wallet coins query:', {
+          totalCoins: allCoins.data.length,
+          coinTypes: [...new Set(allCoins.data.map(c => c.coinType))].slice(0, 5),
+          hasWALCoins: allCoins.data.some(c => c.coinType.includes('wal::WAL')),
+        });
+      } catch (coinQueryError) {
+        console.warn('[signAndExecuteTransaction] Could not query wallet coins:', coinQueryError);
+      }
+
       // Build the transaction
-      // Note: This might fail coin selection if the client can't find WAL coins
-      // But it's worth trying as a fallback
-      const builtTx = await transaction.build({ client: suiClient });
+      // The build() method will query coins for the sender address
+      // It needs the sender to be set to know which address to query coins for
+      console.log('[signAndExecuteTransaction] Building transaction with sender:', walletAddress);
+      const builtTx = await transaction.build({ 
+        client: suiClient,
+        // The sender should already be set, but we can also pass it explicitly if needed
+      });
       console.log('[signAndExecuteTransaction] Transaction built successfully, length:', builtTx.length);
 
       // Use the wallet adapter's signAndExecuteTransactionBlock method
