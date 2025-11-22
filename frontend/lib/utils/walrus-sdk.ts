@@ -181,7 +181,22 @@ async function signAndExecuteTransaction({
     // Filter for WAL coins specifically
     walCoins = allCoins.data.filter(c => c.coinType === WAL_COIN_TYPE || c.coinType.includes('wal::WAL'));
     
-    // Also try to get coin objects directly using getCoins if available
+    // Log coin details from getAllCoins - these should have owner info
+    if (walCoins.length > 0) {
+      console.log('[signAndExecuteTransaction] WAL coins from getAllCoins:', {
+        count: walCoins.length,
+        coins: walCoins.map(c => ({
+          coinObjectId: c.coinObjectId,
+          balance: c.balance,
+          coinType: c.coinType,
+          // getAllCoins result might have owner info
+          hasOwner: 'owner' in c,
+          owner: (c as any).owner,
+        })),
+      });
+    }
+    
+    // Also try to get coin objects directly using getObject to verify accessibility
     // This might give us more detailed information about coin accessibility
     try {
       if (walCoins.length > 0) {
@@ -189,18 +204,31 @@ async function signAndExecuteTransaction({
         const coinObjectIds = walCoins.map(c => c.coinObjectId);
         const coinObjects = await Promise.all(
           coinObjectIds.slice(0, 5).map(id => 
-            suiClient.getObject({ id, options: { showContent: true } }).catch(() => null)
+            suiClient.getObject({ id, options: { showOwner: true, showContent: true } }).catch(() => null)
           )
         );
         const validCoins = coinObjects.filter(Boolean);
         console.log('[signAndExecuteTransaction] Coin object details:', {
           queried: coinObjectIds.length,
           valid: validCoins.length,
-          coinStates: validCoins.map((co: any) => ({
-            id: co?.data?.objectId,
-            owner: co?.data?.owner,
-            hasData: !!co?.data?.content,
-          })),
+          coinStates: validCoins.map((co: any) => {
+            const owner = co?.data?.owner;
+            const ownerAddress = typeof owner === 'string' 
+              ? owner 
+              : owner?.AddressOwner 
+              ? owner.AddressOwner
+              : owner?.ObjectOwner
+              ? owner.ObjectOwner
+              : undefined;
+            return {
+              id: co?.data?.objectId,
+              owner: ownerAddress,
+              ownerType: typeof owner === 'string' ? 'string' : owner?.AddressOwner ? 'AddressOwner' : owner?.ObjectOwner ? 'ObjectOwner' : 'unknown',
+              ownerMatchesSender: ownerAddress === walletAddress,
+              hasData: !!co?.data?.content,
+              hasOwner: !!co?.data?.owner,
+            };
+          }),
         });
       }
     } catch (coinDetailError) {
@@ -350,50 +378,120 @@ async function signAndExecuteTransaction({
       
       let builtTx: Uint8Array;
       try {
-      // Before building, verify coins are still accessible
-      // Sometimes there's a timing issue where coins appear available but aren't when building
-      if (walCoins.length > 0) {
-        // Double-check coin accessibility right before building
-        try {
-          const coinCheck = await suiClient.getObject({
-            id: walCoins[0].coinObjectId,
-            options: { showContent: true },
-          });
-          if (!coinCheck.data) {
-            throw new Error(`WAL coin object ${walCoins[0].coinObjectId} not found or not accessible`);
+        // Before building, verify coins are still accessible
+        // Sometimes there's a timing issue where coins appear available but aren't when building
+        if (walCoins.length > 0) {
+          // Double-check coin accessibility right before building
+          try {
+            const coinCheck = await suiClient.getObject({
+              id: walCoins[0].coinObjectId,
+              options: { showOwner: true, showContent: true },
+            });
+            if (!coinCheck.data) {
+              throw new Error(`WAL coin object ${walCoins[0].coinObjectId} not found or not accessible`);
+            }
+            // Get owner from coinCheck.data.owner
+            // The owner can be in different formats depending on the object type
+            const coinOwner = coinCheck.data.owner;
+            let ownerAddress: string | undefined;
+            
+            // Try different ways to extract owner address
+            if (typeof coinOwner === 'string') {
+              ownerAddress = coinOwner;
+            } else if (coinOwner && typeof coinOwner === 'object') {
+              // Check for AddressOwner (most common for coins)
+              if ('AddressOwner' in coinOwner) {
+                ownerAddress = (coinOwner as any).AddressOwner;
+              }
+              // Check for ObjectOwner
+              else if ('ObjectOwner' in coinOwner) {
+                ownerAddress = (coinOwner as any).ObjectOwner;
+              }
+              // Check for SharedOwner
+              else if ('SharedOwner' in coinOwner) {
+                ownerAddress = (coinOwner as any).SharedOwner;
+              }
+            }
+            
+            // If owner is still undefined, try to get it from the coin data structure
+            if (!ownerAddress && coinCheck.data) {
+              // Sometimes owner is nested differently
+              const dataOwner = (coinCheck.data as any).owner;
+              if (dataOwner) {
+                ownerAddress = typeof dataOwner === 'string' ? dataOwner : dataOwner?.AddressOwner || dataOwner?.ObjectOwner;
+              }
+            }
+            
+            console.log('[signAndExecuteTransaction] Verified coin accessibility before building:', {
+              coinId: walCoins[0].coinObjectId,
+              owner: ownerAddress,
+              ownerRaw: coinOwner,
+              ownerType: typeof coinOwner,
+              ownerIsObject: coinOwner && typeof coinOwner === 'object',
+              ownerKeys: coinOwner && typeof coinOwner === 'object' ? Object.keys(coinOwner) : [],
+              ownerMatchesSender: ownerAddress === walletAddress,
+              hasContent: !!coinCheck.data.content,
+              coinType: walCoins[0].coinType,
+              coinBalance: walCoins[0].balance,
+              dataKeys: Object.keys(coinCheck.data || {}),
+            });
+            
+            // Verify owner matches sender
+            // Note: If owner is undefined but we got this coin from getAllCoins(owner: walletAddress),
+            // then it belongs to walletAddress - the owner field might just not be populated
+            if (ownerAddress && ownerAddress !== walletAddress) {
+              console.error('[signAndExecuteTransaction] Coin owner mismatch!', {
+                coinOwner: ownerAddress,
+                sender: walletAddress,
+              });
+            } else if (!ownerAddress) {
+              // Owner is undefined, but since we got this coin from getAllCoins(owner: walletAddress),
+              // we can assume it belongs to walletAddress
+              console.warn('[signAndExecuteTransaction] Coin owner is undefined, but coin was queried with owner filter:', {
+                coinOwnerRaw: coinOwner,
+                coinId: walCoins[0].coinObjectId,
+                queriedWithOwner: walletAddress,
+                note: 'Assuming ownership since coin was returned from getAllCoins(owner: walletAddress)',
+              });
+            }
+          } catch (coinCheckError: any) {
+            console.warn('[signAndExecuteTransaction] Coin accessibility check failed:', coinCheckError);
+            // Continue anyway - the build might still work
           }
-          const coinOwner = (coinCheck.data as any).owner;
-          const ownerAddress = typeof coinOwner === 'string' ? coinOwner : coinOwner?.AddressOwner;
-          console.log('[signAndExecuteTransaction] Verified coin accessibility before building:', {
-            coinId: walCoins[0].coinObjectId,
-            owner: ownerAddress,
-            ownerMatchesSender: ownerAddress === walletAddress,
-            hasContent: !!coinCheck.data.content,
+        }
+        
+        // Verify RPC can query coins for this address right before building
+        // This helps ensure the RPC connection is working and coins are queryable
+        try {
+          const balanceCheck = await suiClient.getBalance({
+            owner: walletAddress,
+            coinType: WAL_COIN_TYPE,
+          });
+          console.log('[signAndExecuteTransaction] RPC balance query before build:', {
+            balance: balanceCheck.totalBalance,
+            balanceFormatted: (Number(balanceCheck.totalBalance) / 1e9).toFixed(6),
+            coinObjectCount: balanceCheck.coinObjectCount,
+            coinType: WAL_COIN_TYPE,
           });
           
-          // Verify owner matches sender
-          if (ownerAddress !== walletAddress) {
-            console.error('[signAndExecuteTransaction] Coin owner mismatch!', {
-              coinOwner: ownerAddress,
-              sender: walletAddress,
-            });
+          if (Number(balanceCheck.totalBalance) === 0) {
+            throw new Error('RPC reports zero WAL balance, but we found coins earlier. This might be a timing issue.');
           }
-        } catch (coinCheckError: any) {
-          console.warn('[signAndExecuteTransaction] Coin accessibility check failed:', coinCheckError);
-          // Continue anyway - the build might still work
+        } catch (rpcCheckError: any) {
+          console.warn('[signAndExecuteTransaction] RPC balance check failed:', rpcCheckError);
+          // Continue anyway
         }
-      }
-      
-      // Try building with the client - it should automatically select coins
-      // The transaction builder queries coins using the sender address
-      // The Walrus SDK's transaction should handle WAL coin selection internally
-      // Note: The builder queries coins from the RPC, so ensure the sender is set correctly
-      builtTx = await transaction.build({ 
-        client: suiClient,
-        // Ensure the sender is set so coin selection works
-        // The build method will query coins for the sender
-      });
-      console.log('[signAndExecuteTransaction] Transaction built successfully, length:', builtTx.length);
+        
+        // Try building with the client - it should automatically select coins
+        // The transaction builder queries coins using the sender address
+        // The Walrus SDK's transaction should handle WAL coin selection internally
+        // Note: The builder queries coins from the RPC, so ensure the sender is set correctly
+        builtTx = await transaction.build({ 
+          client: suiClient,
+          // Ensure the sender is set so coin selection works
+          // The build method will query coins for the sender
+        });
+        console.log('[signAndExecuteTransaction] Transaction built successfully, length:', builtTx.length);
       } catch (buildError: any) {
         // If build fails with coin selection error, provide more helpful error message
         const errorMsg = buildError?.message || String(buildError);
