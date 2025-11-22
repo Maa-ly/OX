@@ -134,48 +134,83 @@ async function signAndExecuteTransaction({
     }
   }
 
-  // Build the transaction before passing it to the wallet
-  // The wallet adapter expects a built transaction (Uint8Array) or a Transaction that can be built
-  // The Transaction object from Walrus SDK has special properties ($Intent, $kind) that need to be built
-  console.log('[signAndExecuteTransaction] Building transaction before signing...', {
+  // Try two approaches:
+  // 1. First, try letting the wallet build the transaction (so it can select coins properly)
+  // 2. If that fails, fall back to building it ourselves
+  
+  console.log('[signAndExecuteTransaction] Preparing transaction for wallet...', {
     transactionType: typeof transaction,
     isTransaction: transaction instanceof Transaction,
     transactionConstructor: transaction?.constructor?.name,
   });
 
   try {
-    // Create a SuiClient to build the transaction
-    const suiClient = new SuiClient({
-      url: getFullnodeUrl(network),
-    });
-
-    // Build the transaction
-    const builtTx = await transaction.build({ client: suiClient });
-    console.log('[signAndExecuteTransaction] Transaction built successfully, length:', builtTx.length);
-
-    // Use the wallet adapter's signAndExecuteTransactionBlock method
-    // Pass the built transaction (Uint8Array) to the wallet
-    // This SHOULD trigger a wallet popup for the user to sign
-    console.log('[signAndExecuteTransaction] Calling wallet.signAndExecuteTransactionBlock - wallet popup should appear now...');
+    // Approach 1: Try letting the wallet build the transaction
+    // This allows the wallet to properly select WAL coin objects from the user's wallet
+    // Some wallets need to build transactions themselves to handle coin selection correctly
+    console.log('[signAndExecuteTransaction] Attempting to let wallet build transaction (for proper coin selection)...');
     
-    const result = await wallet.signAndExecuteTransactionBlock({
-      transactionBlock: builtTx,
-      options: {
-        showEffects: true,
-        showObjectChanges: true,
-      },
-    });
+    try {
+      // Pass the Transaction object directly - let wallet handle building
+      // This is important for WAL token selection as the wallet knows which coins are available
+      const result = await wallet.signAndExecuteTransactionBlock({
+        transactionBlock: transaction as any, // Pass Transaction object, not built bytes
+        options: {
+          showEffects: true,
+          showObjectChanges: true,
+        },
+      });
+      
+      console.log('[signAndExecuteTransaction] Wallet built and signed transaction successfully');
+      
+      if (!result?.digest) {
+        throw new Error('Transaction did not return a digest');
+      }
+      
+      return { digest: result.digest };
+    } catch (walletBuildError: any) {
+      // If wallet can't build Transaction object (e.g., "$Intent, $kind" error),
+      // fall back to building it ourselves
+      console.warn('[signAndExecuteTransaction] Wallet couldn\'t build Transaction object, trying pre-built approach...', {
+        error: walletBuildError?.message,
+        errorName: walletBuildError?.name,
+      });
+      
+      // Approach 2: Build the transaction ourselves and pass built bytes
+      // Create a SuiClient to build the transaction
+      const suiClient = new SuiClient({
+        url: getFullnodeUrl(network),
+      });
 
-    console.log('[signAndExecuteTransaction] Wallet returned result:', {
-      hasDigest: !!result?.digest,
-      digest: result?.digest,
-    });
+      // Build the transaction
+      // Note: This might fail coin selection if the client can't find WAL coins
+      // But it's worth trying as a fallback
+      const builtTx = await transaction.build({ client: suiClient });
+      console.log('[signAndExecuteTransaction] Transaction built successfully, length:', builtTx.length);
 
-    if (!result?.digest) {
-      throw new Error('Transaction did not return a digest');
+      // Use the wallet adapter's signAndExecuteTransactionBlock method
+      // Pass the built transaction (Uint8Array) to the wallet
+      console.log('[signAndExecuteTransaction] Calling wallet.signAndExecuteTransactionBlock with pre-built transaction...');
+      
+      const result = await wallet.signAndExecuteTransactionBlock({
+        transactionBlock: builtTx,
+        options: {
+          showEffects: true,
+          showObjectChanges: true,
+        },
+      });
+
+      console.log('[signAndExecuteTransaction] Wallet returned result:', {
+        hasDigest: !!result?.digest,
+        digest: result?.digest,
+      });
+
+      if (!result?.digest) {
+        throw new Error('Transaction did not return a digest');
+      }
+
+      return { digest: result.digest };
     }
-
-    return { digest: result.digest };
   } catch (error: any) {
     console.error('[signAndExecuteTransaction] Error calling wallet:', {
       error,
@@ -360,7 +395,20 @@ export async function storeBlobWithUserWallet(
 
     // Sign and execute the register transaction
     // This matches the docs pattern: signAndExecuteTransaction({ transaction: registerTx })
-    console.log('[storeBlobWithUserWallet] Signing register transaction...');
+    console.log('[storeBlobWithUserWallet] Signing register transaction...', {
+      epochs,
+      deletable,
+      owner: walletAddress,
+      blobSize: fileSize,
+    });
+    
+    // Log transaction details before signing to help debug WAL token issues
+    console.log('[storeBlobWithUserWallet] Register transaction details:', {
+      transactionType: typeof registerTx,
+      isTransaction: registerTx instanceof Transaction,
+      hasBuild: typeof registerTx?.build === 'function',
+    });
+    
     const registerResult = await signAndExecuteTransaction({
       transaction: registerTx,
       wallet,
