@@ -40,17 +40,16 @@ router.post('/index', async (req, res, next) => {
       });
     }
 
-    if (!post?.ipTokenIds || !Array.isArray(post.ipTokenIds) || post.ipTokenIds.length === 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'post.ipTokenIds (array with at least one IP token ID) is required',
-      });
-    }
+    // If no IP token IDs provided, index under "all" token so everyone can see it
+    const ipTokenIds = post?.ipTokenIds && Array.isArray(post.ipTokenIds) && post.ipTokenIds.length > 0
+      ? post.ipTokenIds
+      : ['all']; // Special token ID for posts without specific IP tokens
 
-    logger.info(`Indexing post for IP tokens: ${post.ipTokenIds.join(', ')}, blobId: ${blobId}`);
+    logger.info(`Indexing post for IP tokens: ${ipTokenIds.join(', ')}, blobId: ${blobId}`);
 
     // Index the post for each IP token (already stored on Walrus by user)
-    for (const ipTokenId of post.ipTokenIds) {
+    // This makes the post visible to everyone when they query posts
+    for (const ipTokenId of ipTokenIds) {
       await indexerService.indexContribution(
         ipTokenId,
         blobId,
@@ -137,73 +136,57 @@ router.get('/', async (req, res, next) => {
 
     let allPosts = [];
 
-    // If userAddress is provided, try to fetch posts directly from Walrus by owner
-    // But also fall back to index-based query since indexing is more reliable
+    // Always use index-based query to get ALL posts (visible to everyone)
+    // The indexer maintains an index of all posts indexed by IP token
+    if (ipTokenId) {
+      // Get posts for specific IP token
+      const contributions = await indexerService.queryContributionsByIP(ipTokenId, {
+        type: 'post',
+      });
+
+      allPosts = contributions
+        .filter((c) => c.post_type === 'discover_post' || c.engagement_type === 'post')
+        .map((c) => ({
+          id: c.walrus_cid || c.walrus_blob_id || c.id,
+          blobId: c.walrus_cid || c.walrus_blob_id || c.id,
+          ...c,
+        }));
+    } else {
+      // Get ALL posts from ALL tokens (everyone can see all posts)
+      // First, get all token IDs from contract
+      const { contractService } = await import('../services/contract.js');
+      const tokenIds = await contractService.getAllTokens();
+
+      // Also include "all" token for posts without specific IP tokens
+      const allTokenIds = [...tokenIds, 'all'];
+
+      logger.info(`Fetching posts from ${allTokenIds.length} IP tokens (including 'all' token)`);
+
+      for (const tokenId of allTokenIds) {
+        try {
+          const contributions = await indexerService.queryContributionsByIP(tokenId, {
+            type: 'post',
+          });
+
+          const posts = contributions
+            .filter((c) => c.post_type === 'discover_post' || c.engagement_type === 'post')
+            .map((c) => ({
+              id: c.walrus_cid || c.walrus_blob_id || c.id,
+              blobId: c.walrus_cid || c.walrus_blob_id || c.id,
+              ...c,
+            }));
+
+          allPosts.push(...posts);
+          logger.debug(`Found ${posts.length} posts for token ${tokenId}`);
+        } catch (error) {
+          logger.warn(`Failed to fetch posts for token ${tokenId}:`, error.message);
+        }
+      }
+    }
+
+    // If userAddress is provided, filter to show only that user's posts
+    // Otherwise, show ALL posts (everyone can see everyone's posts)
     if (userAddress) {
-      try {
-        const userPosts = await walrusService.getContributionsByOwner(userAddress);
-        if (userPosts.length > 0) {
-          allPosts = userPosts;
-          
-          // Apply IP token filter if specified
-          if (ipTokenId) {
-            allPosts = allPosts.filter(post => 
-              post.ipTokenIds && Array.isArray(post.ipTokenIds) && post.ipTokenIds.includes(ipTokenId)
-            );
-          }
-        }
-      } catch (error) {
-        logger.warn(`Error fetching posts for user ${userAddress} (will use index):`, error.message);
-        // Fall through to index-based query
-      }
-    }
-
-    // Use index-based query (more reliable - uses indexed posts)
-    // This works even if direct owner query fails
-    if (allPosts.length === 0) {
-      if (ipTokenId) {
-        // Get posts for specific IP token
-        const contributions = await indexerService.queryContributionsByIP(ipTokenId, {
-          type: 'post',
-        });
-
-        allPosts = contributions
-          .filter((c) => c.post_type === 'discover_post' || c.engagement_type === 'post')
-          .map((c) => ({
-            id: c.walrus_cid || c.walrus_blob_id || c.id,
-            blobId: c.walrus_cid || c.walrus_blob_id || c.id,
-            ...c,
-          }));
-      } else {
-        // Get all posts from all tokens
-        // First, get all token IDs from contract
-        const { contractService } = await import('../services/contract.js');
-        const tokenIds = await contractService.getAllTokens();
-
-        for (const tokenId of tokenIds) {
-          try {
-            const contributions = await indexerService.queryContributionsByIP(tokenId, {
-              type: 'post',
-            });
-
-            const posts = contributions
-              .filter((c) => c.post_type === 'discover_post' || c.engagement_type === 'post')
-              .map((c) => ({
-                id: c.walrus_cid || c.walrus_blob_id || c.id,
-                blobId: c.walrus_cid || c.walrus_blob_id || c.id,
-                ...c,
-              }));
-
-            allPosts.push(...posts);
-          } catch (error) {
-            logger.warn(`Failed to fetch posts for token ${tokenId}:`, error.message);
-          }
-        }
-      }
-    }
-
-    // If userAddress was provided and we have posts, filter by author
-    if (userAddress && allPosts.length > 0) {
       allPosts = allPosts.filter(post => 
         post.authorAddress === userAddress || post.author === userAddress
       );
