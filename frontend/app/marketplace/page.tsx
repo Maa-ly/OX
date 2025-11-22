@@ -1,11 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import Link from 'next/link';
 import { mockAPI, type IPToken } from '@/lib/mocks/data';
 import { Header } from '@/components/shared/header';
 
-export default function Marketplace() {
+function MarketplaceContent() {
   const [tokens, setTokens] = useState<IPToken[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -138,6 +138,24 @@ export default function Marketplace() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function Marketplace() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-[#0a0a0f] text-white">
+        <Header />
+        <div className="flex items-center justify-center py-20">
+          <div className="text-center">
+            <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-cyan-500 border-r-transparent"></div>
+            <p className="mt-4 text-zinc-400">Loading...</p>
+          </div>
+        </div>
+      </div>
+    }>
+      <MarketplaceContent />
+    </Suspense>
   );
 }
 
