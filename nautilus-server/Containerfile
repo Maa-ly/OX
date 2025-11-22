@@ -72,9 +72,9 @@ COPY --from=user-jq /bin/jq initramfs
 COPY --from=user-socat /bin/socat . initramfs
 COPY --from=user-nit /bin/init initramfs
 # RUN cp /src/nautilus-server/target/${TARGET}/release/nautilus-server initramfs
-ARG ENCLAVE_BIN=nautilus-server
+# ARG ENCLAVE_BIN=nautilus-server
 RUN ls -lh /src/nautilus-server/target/${TARGET}/release/
-RUN cp /src/nautilus-server/target/${TARGET}/release/${ENCLAVE_BIN} initramfs/nautilus-server
+RUN cp /src/nautilus-server/target/${TARGET}/release/nautilus-server initramfs
 RUN cp /src/nautilus-server/traffic_forwarder.py initramfs/
 RUN cp /src/nautilus-server/run.sh initramfs/
 
