@@ -418,20 +418,26 @@ export async function storePost(
 
   if (mediaFile) {
     try {
-      console.log('[storePost] Uploading media file using SDK...');
-      // Convert file to Uint8Array
-      const arrayBuffer = await mediaFile.arrayBuffer();
-      const blob = new Uint8Array(arrayBuffer);
+      console.log('[storePost] Uploading media file using SDK...', {
+        fileName: mediaFile.name,
+        fileSize: mediaFile.size,
+        fileType: mediaFile.type,
+      });
       
-      // Store media blob using user's wallet
-      const uploadResult = await storeBlobWithUserWallet(blob, wallet, {
+      // Use the new storeMediaFileWithUserWallet helper
+      // This automatically handles File objects and detects content-type
+      const { storeMediaFileWithUserWallet } = await import('./walrus-sdk');
+      const uploadResult = await storeMediaFileWithUserWallet(mediaFile, wallet, {
         permanent: true,
         epochs: 365,
       });
       
       mediaBlobId = uploadResult.blobId;
       mediaUrl = `${API_BASE_URL}/api/walrus/read/${mediaBlobId}`;
-      console.log('[storePost] Media uploaded successfully:', mediaBlobId);
+      console.log('[storePost] Media uploaded successfully:', {
+        blobId: mediaBlobId,
+        size: uploadResult.size,
+      });
     } catch (error: any) {
       console.error('[storePost] Error uploading media:', error);
       // Check if it's a balance error

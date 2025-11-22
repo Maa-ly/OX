@@ -204,17 +204,22 @@ export function createWalrusClient(network: 'testnet' | 'mainnet' = 'testnet') {
   }).$extend(
     walrus({
       // Optional: Add upload relay to reduce requests (~2200 -> fewer requests)
+      // Uncomment to use upload relay (requires tip payment)
       // uploadRelay: {
       //   host: 'https://upload-relay.testnet.walrus.space',
       //   sendTip: {
       //     max: 1_000,
       //   },
       // },
-      // Optional: Configure storage node client options
-      // storageNodeClientOptions: {
-      //   timeout: 60_000,
-      //   onError: (error) => console.log('[Walrus] Storage node error:', error),
-      // },
+      // Configure storage node client options for better error handling
+      storageNodeClientOptions: {
+        timeout: 60_000,
+        onError: (error) => {
+          // Log individual storage node errors for debugging
+          // This helps troubleshoot when some nodes are down
+          console.log('[Walrus] Storage node error:', error);
+        },
+      },
     })
   );
 
@@ -231,6 +236,12 @@ export function createWalrusClient(network: 'testnet' | 'mainnet' = 'testnet') {
  * Store a blob on Walrus using user's wallet
  * Uses writeFilesFlow for browser environments with wallet popups
  * 
+ * Supports multiple file types:
+ * - Text: string or Uint8Array
+ * - Images: File, Blob, or Uint8Array
+ * - Videos: File, Blob, or Uint8Array
+ * - Any binary data: File, Blob, or Uint8Array
+ * 
  * Reference: https://sdk.mystenlabs.com/walrus
  * 
  * The flow:
@@ -240,19 +251,21 @@ export function createWalrusClient(network: 'testnet' | 'mainnet' = 'testnet') {
  * 4. Certify the blob on-chain (user signs transaction)
  * 5. Get the uploaded files
  * 
- * @param data - Data to store (string or Uint8Array)
+ * @param data - Data to store (string, Uint8Array, Blob, or File)
  * @param wallet - User's wallet (from useWallet() hook)
  * @param options - Storage options
  * @returns Promise with blob ID
  */
 export async function storeBlobWithUserWallet(
-  data: string | Uint8Array,
+  data: string | Uint8Array | Blob | File,
   wallet: WalletAdapter,
   options: {
     epochs?: number;
     deletable?: boolean;
     permanent?: boolean;
     network?: 'testnet' | 'mainnet';
+    identifier?: string;
+    tags?: Record<string, string>;
   } = {}
 ): Promise<{ blobId: string }> {
   if (!wallet || !wallet.connected || !wallet.account?.address) {
@@ -262,10 +275,36 @@ export async function storeBlobWithUserWallet(
   const network = options.network || 'testnet';
   const client = createWalrusClient(network);
 
-  // Convert data to Uint8Array if string
-  const blob = typeof data === 'string' 
-    ? new TextEncoder().encode(data)
-    : data;
+  // Convert data to appropriate format for WalrusFile
+  // WalrusFile.from() accepts: Uint8Array, Blob, or string
+  let contents: Uint8Array | Blob;
+  let fileSize: number;
+  
+  if (data instanceof File) {
+    // File object - use as Blob (File extends Blob)
+    contents = data;
+    fileSize = data.size;
+    // Auto-detect content type from File if not provided
+    if (!options.tags && data.type) {
+      options.tags = { 'content-type': data.type };
+    }
+    // Use filename as identifier if not provided
+    if (!options.identifier && data.name) {
+      options.identifier = data.name;
+    }
+  } else if (data instanceof Blob) {
+    // Blob object
+    contents = data;
+    fileSize = data.size;
+  } else if (typeof data === 'string') {
+    // String - convert to Uint8Array
+    contents = new TextEncoder().encode(data);
+    fileSize = contents.length;
+  } else {
+    // Uint8Array
+    contents = data;
+    fileSize = data.length;
+  }
 
   const epochs = options.epochs || 365;
   const deletable = options.deletable ?? !options.permanent;
@@ -276,152 +315,78 @@ export async function storeBlobWithUserWallet(
   }
 
   console.log('[storeBlobWithUserWallet] Using writeFilesFlow for browser wallet...', {
-    blobSize: blob.length,
+    blobSize: fileSize,
     epochs,
     deletable,
     network,
     address: walletAddress,
+    identifier: options.identifier,
+    contentType: options.tags?.['content-type'],
   });
 
   try {
-    // Step 1: Create WalrusFile and initialize the flow
+    // Step 1: Create WalrusFile following the documentation pattern
+    // Use meaningful identifier and optional tags
+    const identifier = options.identifier || 'blob.bin';
     const file = WalrusFile.from({
-      contents: blob,
-      identifier: 'blob.bin', // Required identifier for WalrusFile
+      contents,
+      identifier,
+      ...(options.tags && { tags: options.tags }),
     });
 
+    // Initialize the flow with files array
+    // Note: Writing multiple files together is more efficient (single quilt)
     const flow = (client as any).walrus.writeFilesFlow({
       files: [file],
     });
 
     // Step 2: Encode the files and generate blobId
+    // This can be done immediately when file is selected (per docs)
     await flow.encode();
     console.log('[storeBlobWithUserWallet] Files encoded successfully');
 
     // Step 3: Register the blob on-chain
-    // This returns a Transaction object that needs to be signed by the user
+    // Returns a Transaction object that needs to be signed by the user
+    // Following the documentation pattern: flow.register({ epochs, owner, deletable })
     const registerTx = flow.register({
       epochs,
       owner: walletAddress,
       deletable,
     });
 
-    console.log('[storeBlobWithUserWallet] Register transaction created:', {
-      type: typeof registerTx,
-      isTransaction: registerTx instanceof Transaction,
-      hasBuild: typeof registerTx?.build === 'function',
-      hasSetSender: typeof registerTx?.setSender === 'function',
-      keys: registerTx ? Object.keys(registerTx).slice(0, 30) : [],
-      constructor: registerTx?.constructor?.name,
-      // Log the actual transaction object to see its structure
-      transactionValue: JSON.stringify(registerTx, (key, value) => {
-        // Don't serialize functions or circular references
-        if (typeof value === 'function') return '[Function]';
-        if (key === '$Intent' || key === '$kind') return value; // Show these special properties
-        return value;
-      }, 2).substring(0, 500), // Limit length
-    });
-    
-    // Check for special properties that might be causing issues
-    if (registerTx && typeof registerTx === 'object') {
-      const specialKeys = Object.keys(registerTx).filter(k => k.startsWith('$'));
-      if (specialKeys.length > 0) {
-        console.warn('[storeBlobWithUserWallet] Transaction has special properties:', specialKeys);
-      }
-    }
-    
-    // Ensure we have a valid transaction
     if (!registerTx) {
       throw new Error('Register transaction is null or undefined');
     }
-    
-    // The transaction from flow.register() should be a Transaction instance
-    // According to Walrus SDK docs, flow.register() returns a Transaction that can be signed directly
-    // Don't build it - pass it directly to the wallet adapter
-    // Ensure the transaction has the sender set
-    if (registerTx instanceof Transaction && typeof registerTx.setSender === 'function') {
-      try {
-        registerTx.setSender(walletAddress);
-        console.log('[storeBlobWithUserWallet] Set sender on register transaction');
-      } catch (setSenderError: any) {
-        console.warn('[storeBlobWithUserWallet] Could not set sender:', setSenderError);
-      }
-    }
-    
+
     // Sign and execute the register transaction
-    // Use the helper function that matches the Walrus SDK docs pattern
+    // This matches the docs pattern: signAndExecuteTransaction({ transaction: registerTx })
     console.log('[storeBlobWithUserWallet] Signing register transaction...');
-    console.log('[storeBlobWithUserWallet] Register transaction:', {
-      type: typeof registerTx,
-      isTransaction: registerTx instanceof Transaction,
-      hasBuild: typeof registerTx?.build === 'function',
-      hasSetSender: typeof registerTx?.setSender === 'function',
-      constructor: registerTx?.constructor?.name,
+    const registerResult = await signAndExecuteTransaction({
+      transaction: registerTx,
+      wallet,
+      network,
     });
     
-    let registerResult: { digest: string };
-    try {
-      // Use the helper function that matches Walrus SDK docs: signAndExecuteTransaction({ transaction: registerTx })
-      registerResult = await signAndExecuteTransaction({
-        transaction: registerTx,
-        wallet,
-        network,
-      });
-      
-      console.log('[storeBlobWithUserWallet] Blob registered:', registerResult.digest);
-    } catch (registerError: any) {
-      console.error('[storeBlobWithUserWallet] Error signing register transaction:', {
-        error: registerError,
-        message: registerError?.message,
-        stack: registerError?.stack,
-      });
-      throw registerError;
-    }
+    console.log('[storeBlobWithUserWallet] Blob registered:', registerResult.digest);
 
     // Step 4: Upload the data to storage nodes
+    // This can be done immediately after the register step
+    // Per docs: await flow.upload({ digest })
     await flow.upload({ digest: registerResult.digest });
     console.log('[storeBlobWithUserWallet] Data uploaded to storage nodes');
 
     // Step 5: Certify the blob on-chain
-    // This returns a Transaction object that needs to be signed by the user
+    // Returns a Transaction object that needs to be signed by the user
+    // Per docs: const certifyTx = flow.certify()
     const certifyTx = flow.certify();
     
-    console.log('[storeBlobWithUserWallet] Certify transaction created:', {
-      type: typeof certifyTx,
-      isTransaction: certifyTx instanceof Transaction,
-      hasBuild: typeof certifyTx?.build === 'function',
-      hasSetSender: typeof certifyTx?.setSender === 'function',
-      keys: certifyTx ? Object.keys(certifyTx).slice(0, 20) : [],
-      constructor: certifyTx?.constructor?.name,
-    });
-    
-    // Ensure certify transaction is valid
     if (!certifyTx) {
       throw new Error('Certify transaction is null or undefined');
     }
     
-    // Ensure the certify transaction has the sender set
-    if (certifyTx instanceof Transaction && typeof certifyTx.setSender === 'function') {
-      try {
-        certifyTx.setSender(walletAddress);
-        console.log('[storeBlobWithUserWallet] Set sender on certify transaction');
-      } catch (setSenderError: any) {
-        console.warn('[storeBlobWithUserWallet] Could not set sender:', setSenderError);
-      }
-    }
-    
     // Sign and execute the certify transaction
-    // Use the helper function that matches the Walrus SDK docs pattern
+    // Per docs: await signAndExecuteTransaction({ transaction: certifyTx })
     console.log('[storeBlobWithUserWallet] Signing certify transaction...');
-    console.log('[storeBlobWithUserWallet] Certify transaction:', {
-      type: typeof certifyTx,
-      isTransaction: certifyTx instanceof Transaction,
-      hasBuild: typeof certifyTx?.build === 'function',
-      hasSetSender: typeof certifyTx?.setSender === 'function',
-      constructor: certifyTx?.constructor?.name,
-    });
-    
-    // Use the helper function that matches Walrus SDK docs: signAndExecuteTransaction({ transaction: certifyTx })
     const certifyResult = await signAndExecuteTransaction({
       transaction: certifyTx,
       wallet,
@@ -431,6 +396,7 @@ export async function storeBlobWithUserWallet(
     console.log('[storeBlobWithUserWallet] Blob certified:', certifyResult.digest);
 
     // Step 6: Get the uploaded files
+    // Per docs: const files = await flow.listFiles()
     const files = await flow.listFiles();
     console.log('[storeBlobWithUserWallet] Files uploaded:', files);
 
@@ -481,6 +447,190 @@ export async function readBlobFromWalrus(
 }
 
 /**
+ * Store multiple files on Walrus using user's wallet
+ * Writing multiple files together is more efficient (single quilt)
+ * Uses writeFilesFlow for browser environments with wallet popups
+ * 
+ * Reference: https://sdk.mystenlabs.com/walrus
+ * 
+ * @param files - Array of file data with identifiers and optional tags
+ * @param wallet - User's wallet (from useWallet() hook)
+ * @param options - Storage options
+ * @returns Promise with array of blob IDs
+ */
+export async function storeFilesWithUserWallet(
+  files: Array<{
+    contents: string | Uint8Array | Blob;
+    identifier: string;
+    tags?: Record<string, string>;
+  }>,
+  wallet: WalletAdapter,
+  options: {
+    epochs?: number;
+    deletable?: boolean;
+    permanent?: boolean;
+    network?: 'testnet' | 'mainnet';
+  } = {}
+): Promise<{ blobIds: string[] }> {
+  if (!wallet || !wallet.connected || !wallet.account?.address) {
+    throw new Error('Wallet not connected. Please connect your wallet first.');
+  }
+
+  if (!files || files.length === 0) {
+    throw new Error('At least one file is required');
+  }
+
+  const network = options.network || 'testnet';
+  const client = createWalrusClient(network);
+
+  const epochs = options.epochs || 365;
+  const deletable = options.deletable ?? !options.permanent;
+  const walletAddress = wallet.account?.address || '';
+
+  console.log('[storeFilesWithUserWallet] Using writeFilesFlow for multiple files...', {
+    fileCount: files.length,
+    epochs,
+    deletable,
+    network,
+    address: walletAddress,
+  });
+
+  try {
+    // Step 1: Create WalrusFile objects following the documentation pattern
+    const walrusFiles = files.map((file) => {
+      let contents: Uint8Array | Blob;
+      
+      if (file.contents instanceof Blob) {
+        contents = file.contents;
+      } else if (typeof file.contents === 'string') {
+        contents = new TextEncoder().encode(file.contents);
+      } else {
+        contents = file.contents;
+      }
+
+      return WalrusFile.from({
+        contents,
+        identifier: file.identifier,
+        ...(file.tags && { tags: file.tags }),
+      });
+    });
+
+    // Initialize the flow with multiple files
+    // Writing multiple files together is more efficient (single quilt)
+    const flow = (client as any).walrus.writeFilesFlow({
+      files: walrusFiles,
+    });
+
+    // Step 2: Encode the files
+    await flow.encode();
+    console.log('[storeFilesWithUserWallet] Files encoded successfully');
+
+    // Step 3: Register the blob
+    const registerTx = flow.register({
+      epochs,
+      owner: walletAddress,
+      deletable,
+    });
+
+    if (!registerTx) {
+      throw new Error('Register transaction is null or undefined');
+    }
+
+    const registerResult = await signAndExecuteTransaction({
+      transaction: registerTx,
+      wallet,
+      network,
+    });
+    
+    console.log('[storeFilesWithUserWallet] Blob registered:', registerResult.digest);
+
+    // Step 4: Upload the data to storage nodes
+    await flow.upload({ digest: registerResult.digest });
+    console.log('[storeFilesWithUserWallet] Data uploaded to storage nodes');
+
+    // Step 5: Certify the blob
+    const certifyTx = flow.certify();
+    
+    if (!certifyTx) {
+      throw new Error('Certify transaction is null or undefined');
+    }
+    
+    const certifyResult = await signAndExecuteTransaction({
+      transaction: certifyTx,
+      wallet,
+      network,
+    });
+    
+    console.log('[storeFilesWithUserWallet] Blob certified:', certifyResult.digest);
+
+    // Step 6: Get the uploaded files
+    const uploadedFiles = await flow.listFiles();
+    console.log('[storeFilesWithUserWallet] Files uploaded:', uploadedFiles);
+
+    if (!uploadedFiles || uploadedFiles.length === 0) {
+      throw new Error('No files returned from writeFilesFlow');
+    }
+
+    return {
+      blobIds: uploadedFiles.map((f: any) => f.blobId).filter(Boolean) as string[],
+    };
+  } catch (error: any) {
+    console.error('[storeFilesWithUserWallet] SDK writeFilesFlow error:', {
+      error,
+      message: error?.message,
+      stack: error?.stack,
+    });
+    
+    const errorMessage = error?.message || String(error);
+    const errorString = errorMessage.toLowerCase();
+    
+    if ((errorString.includes('insufficient') && errorString.includes('wal')) || 
+        (errorString.includes('insufficient') && errorString.includes('balance') && errorString.includes('wal'))) {
+      throw new Error(`Insufficient WAL balance: Your wallet needs WAL tokens to store on Walrus. Please exchange SUI for WAL tokens first.`);
+    }
+    
+    if (errorMessage.includes('user rejected') || errorMessage.includes('User rejected')) {
+      throw new Error('Transaction was rejected by the user.');
+    }
+    
+    throw error;
+  }
+}
+
+/**
+ * Store a media file (image/video) on Walrus using user's wallet
+ * Convenience function for uploading images and videos
+ * 
+ * @param file - File object from file input (image or video)
+ * @param wallet - User's wallet (from useWallet() hook)
+ * @param options - Storage options
+ * @returns Promise with blob ID and file size
+ */
+export async function storeMediaFileWithUserWallet(
+  file: File,
+  wallet: WalletAdapter,
+  options: {
+    epochs?: number;
+    deletable?: boolean;
+    permanent?: boolean;
+    network?: 'testnet' | 'mainnet';
+  } = {}
+): Promise<{ blobId: string; size: number }> {
+  // File object automatically provides name and type
+  const result = await storeBlobWithUserWallet(file, wallet, {
+    ...options,
+    permanent: options.permanent ?? true, // Media files are permanent by default
+    epochs: options.epochs || 365,
+    // identifier and content-type tags are auto-detected from File
+  });
+
+  return {
+    blobId: result.blobId,
+    size: file.size,
+  };
+}
+
+/**
  * Store a contribution on Walrus using user's wallet
  * Wrapper around storeBlobWithUserWallet for contributions
  * 
@@ -502,10 +652,15 @@ export async function storeContributionWithUserWallet(
   // Convert contribution to JSON string
   const data = JSON.stringify(contribution);
   
+  // Use meaningful identifier and content-type tag
   return await storeBlobWithUserWallet(data, wallet, {
     ...options,
     permanent: options.permanent ?? true, // Contributions are permanent by default
     epochs: options.epochs || 365,
+    identifier: 'contribution.json',
+    tags: {
+      'content-type': 'application/json',
+    },
   });
 }
 
