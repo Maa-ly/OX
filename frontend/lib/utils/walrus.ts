@@ -596,17 +596,18 @@ async function queryBlobIdsFromSui(): Promise<string[]> {
 
       for (const event of events.data) {
         // Extract blobId from event
-        const blobId = event.parsedJson?.blobId || 
-                      event.parsedJson?.blob_id ||
-                      event.parsedJson?.id ||
-                      event.parsedJson?.blobObject?.blobId ||
-                      event.parsedJson?.blobObject?.id;
+        const parsedJson = event.parsedJson as any;
+        const blobId = parsedJson?.blobId || 
+                      parsedJson?.blob_id ||
+                      parsedJson?.id ||
+                      parsedJson?.blobObject?.blobId ||
+                      parsedJson?.blobObject?.id;
         if (blobId) {
           blobIds.push(blobId);
         }
 
         // Extract addresses to query for blob objects
-        const sender = event.sender || event.parsedJson?.sender || event.parsedJson?.owner;
+        const sender = event.sender || parsedJson?.sender || parsedJson?.owner;
         if (sender) {
           addresses.add(sender);
         }
