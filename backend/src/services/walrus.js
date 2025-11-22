@@ -1380,27 +1380,36 @@ export class WalrusService {
         // Method 1: Check in-memory indexer first (for recently indexed posts)
         let indexedBlobIds = new Set();
         try {
-          const { WalrusIndexerService } = await import('./walrus-indexer.js');
-          const indexerService = new WalrusIndexerService();
-          const indexedPosts = await indexerService.queryContributionsByIP('all', {});
+          // Import the indexer service instance from routes/posts.js to use the same instance
+          // This ensures we're using the same in-memory index that was populated during indexing
+          const postsModule = await import('../routes/posts.js');
+          const indexerService = postsModule.indexerService;
           
-          if (indexedPosts && indexedPosts.length > 0) {
-            logger.info(`Found ${indexedPosts.length} posts from in-memory index`);
-            // Add indexed posts directly
-            for (const post of indexedPosts) {
-              const blobId = post.blobId || post.id;
-              if (blobId) {
-                indexedBlobIds.add(blobId);
-                allPosts.push({
-                  id: blobId,
-                  blobId,
-                  ...post,
-                });
+          if (indexerService) {
+            const indexedPosts = await indexerService.queryContributionsByIP('all', {});
+            
+            if (indexedPosts && indexedPosts.length > 0) {
+              logger.info(`Found ${indexedPosts.length} posts from in-memory index`);
+              // Add indexed posts directly
+              for (const post of indexedPosts) {
+                const blobId = post.blobId || post.id;
+                if (blobId) {
+                  indexedBlobIds.add(blobId);
+                  allPosts.push({
+                    id: blobId,
+                    blobId,
+                    ...post,
+                  });
+                }
               }
+            } else {
+              logger.info('In-memory indexer is empty (no posts indexed yet)');
             }
+          } else {
+            logger.warn('indexerService not found in posts module');
           }
         } catch (indexerError) {
-          logger.debug('In-memory indexer not available:', indexerError.message);
+          logger.warn('In-memory indexer not available:', indexerError.message);
         }
         
         // Method 2: Query Sui events to discover additional posts (not in indexer)
@@ -1442,7 +1451,11 @@ export class WalrusService {
       // Sort by timestamp (newest first)
       allPosts.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
 
-      logger.info(`Found ${allPosts.length} posts from Walrus (Sui-first query)`);
+      logger.info(`Found ${allPosts.length} total posts from Walrus`, {
+        fromIndexer: indexedBlobIds?.size || 0,
+        fromSui: allPosts.length - (indexedBlobIds?.size || 0),
+        total: allPosts.length,
+      });
       return allPosts;
     } catch (error) {
       logger.error('Error getting all posts:', error);

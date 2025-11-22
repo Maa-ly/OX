@@ -103,10 +103,17 @@ function DiscoverPageContent() {
       else if (activeFilter === 'videos') mediaType = 'video';
       else if (activeFilter === 'discussions') mediaType = 'text';
       
+      console.log('[loadPosts] Fetching posts...', { mediaType, limit: 1000 });
       const result = await getPosts({
         mediaType: mediaType,
         limit: 1000, // Get all posts
       });
+      console.log('[loadPosts] Posts fetched:', { 
+        total: result.total, 
+        postsCount: result.posts.length,
+        posts: result.posts.map(p => ({ id: p.id, blobId: p.blobId, content: p.content?.substring(0, 50) }))
+      });
+      
       setPosts(result.posts.map(post => ({
         ...post,
         timestamp: typeof post.timestamp === 'number' 
@@ -115,7 +122,7 @@ function DiscoverPageContent() {
       })));
       setLastUpdateTime(Date.now());
     } catch (error) {
-      console.error("Failed to load posts:", error);
+      console.error("[loadPosts] Failed to load posts:", error);
     } finally {
       if (!silent) setLoading(false);
     }

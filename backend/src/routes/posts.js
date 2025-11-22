@@ -9,6 +9,9 @@ const router = express.Router();
 const walrusService = new WalrusService();
 const indexerService = new WalrusIndexerService();
 
+// Export indexerService so walrus.js can use the same instance
+export { indexerService };
+
 // Configure multer for file uploads (memory storage)
 const upload = multer({
   storage: multer.memoryStorage(),
