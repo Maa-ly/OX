@@ -3,6 +3,9 @@
  * Users pay with WAL tokens from their own wallets
  * 
  * Reference: https://sdk.mystenlabs.com/walrus
+ * 
+ * Also supports HTTP API upload method as an alternative to SDK transactions
+ * Reference: https://raw.githubusercontent.com/Akpahsamuel/NFT/main/frontend%2Fsrc%2Fservices%2Fwalrus.ts
  */
 
 import { SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
@@ -13,6 +16,7 @@ import { SuiClient } from '@mysten/sui/client';
 import { WalrusFile } from '@mysten/walrus';
 import type { Signer } from '@mysten/sui/cryptography';
 import { estimateWalrusCost } from './wal-balance';
+import axios from 'axios';
 
 /**
  * Wallet adapter interface compatible with Suiet Wallet Kit and other wallet adapters
@@ -1226,5 +1230,164 @@ export function createWalrusFlow(
       });
     },
   };
+}
+
+/**
+ * Walrus HTTP API endpoints (bypasses SDK transaction building)
+ * Based on: https://raw.githubusercontent.com/Akpahsamuel/NFT/main/frontend%2Fsrc%2Fservices%2Fwalrus.ts
+ */
+const WALRUS_PUBLISHER_URL = 'https://publisher.walrus-01.tududes.com';
+const WALRUS_AGGREGATOR_URL = 'https://aggregator.walrus-testnet.walrus.space';
+const BACKUP_AGGREGATOR_URL = 'https://wal-aggregator-testnet.staketab.org';
+
+interface WalrusUploadResponse {
+  newlyCreated?: {
+    blobObject: {
+      id: string;
+      blobId: string;
+    };
+  };
+  alreadyCertified?: {
+    blobId: string;
+  };
+}
+
+/**
+ * Upload data directly to Walrus using HTTP API (bypasses SDK transaction building)
+ * This method avoids the coin selection issue by using direct HTTP upload
+ * 
+ * @param data - Data to store (string, Uint8Array, Blob, or File)
+ * @param userAddress - User's Sui address to own the resulting blob object
+ * @param options - Upload options
+ * @returns Promise with blob ID and URL
+ */
+export async function storeBlobWithHttpApi(
+  data: string | Uint8Array | Blob | File,
+  userAddress?: string,
+  options: {
+    epochs?: number;
+    network?: 'testnet' | 'mainnet';
+  } = {}
+): Promise<{ blobId: string; walrusUrl: string }> {
+  try {
+    // Convert data to ArrayBuffer
+    let fileData: ArrayBuffer;
+    
+    if (data instanceof File || data instanceof Blob) {
+      fileData = await data.arrayBuffer();
+    } else if (data instanceof Uint8Array) {
+      // Convert Uint8Array to ArrayBuffer by creating a new buffer
+      fileData = new Uint8Array(data).buffer;
+    } else if (typeof data === 'string') {
+      const encoder = new TextEncoder();
+      const encoded = encoder.encode(data);
+      fileData = encoded.buffer;
+    } else {
+      throw new Error('Unsupported data type. Expected string, Uint8Array, Blob, or File.');
+    }
+
+    // Construct upload URL
+    const epochs = options.epochs || 5;
+    let uploadUrl = `${WALRUS_PUBLISHER_URL}/v1/blobs?epochs=${epochs}`;
+    if (userAddress) {
+      uploadUrl += `&send_object_to=${userAddress}`;
+    }
+
+    console.log('[storeBlobWithHttpApi] Uploading to Walrus HTTP API...', {
+      url: uploadUrl,
+      dataSize: fileData.byteLength,
+      userAddress,
+      epochs,
+    });
+
+    const response = await axios.put<WalrusUploadResponse>(
+      uploadUrl,
+      fileData,
+      {
+        headers: {
+          'Content-Type': 'application/octet-stream',
+        },
+        timeout: 60000, // 60 seconds
+      }
+    );
+
+    // Extract blob ID from response
+    const blobId = response.data.newlyCreated?.blobObject.blobId || 
+                  response.data.alreadyCertified?.blobId;
+    
+    if (!blobId) {
+      throw new Error('Failed to get blob ID from Walrus response');
+    }
+
+    const walrusUrl = `${WALRUS_AGGREGATOR_URL}/v1/blobs/${blobId}`;
+
+    console.log('[storeBlobWithHttpApi] Upload successful:', {
+      blobId,
+      walrusUrl,
+    });
+
+    return {
+      blobId,
+      walrusUrl,
+    };
+  } catch (error) {
+    console.error('[storeBlobWithHttpApi] Upload failed:', error);
+    if (axios.isAxiosError(error)) {
+      // Handle specific error types
+      if (error.code === 'NETWORK_ERROR' || error.message === 'Network Error') {
+        throw new Error('Network error: Unable to connect to Walrus. Please check your internet connection and try again.');
+      }
+      if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+        throw new Error('Upload timeout: The file is too large or the connection is slow. Please try again.');
+      }
+      if (error.response?.status === 403) {
+        throw new Error('Access denied: CORS or authentication error. Please contact support.');
+      }
+      if (error.response?.status === 404) {
+        throw new Error('Service unavailable: Walrus endpoint not found. The service may be temporarily down.');
+      }
+      if (error.response && error.response.status >= 500) {
+        throw new Error('Server error: Walrus service is experiencing issues. Please try again later.');
+      }
+      
+      const message = error.response?.data?.message || error.message;
+      throw new Error(`Failed to upload to Walrus: ${message}`);
+    }
+    throw new Error(`Failed to upload to Walrus: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+}
+
+/**
+ * Check if a blob is available (certified) for reading
+ */
+export async function checkBlobAvailability(
+  blobId: string,
+  maxRetries: number = 3,
+  delayMs: number = 2000
+): Promise<boolean> {
+  const aggregatorUrls = [WALRUS_AGGREGATOR_URL, BACKUP_AGGREGATOR_URL];
+  
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    // Try both aggregator endpoints
+    for (const aggregatorUrl of aggregatorUrls) {
+      try {
+        const response = await axios.head(`${aggregatorUrl}/v1/blobs/${blobId}`, {
+          timeout: 5000,
+        });
+        if (response.status === 200) {
+          return true;
+        }
+      } catch (error) {
+        // Continue to next aggregator or retry
+        console.warn(`[checkBlobAvailability] Failed to check blob on ${aggregatorUrl}:`, error);
+      }
+    }
+    
+    if (attempt < maxRetries - 1) {
+      // Wait before retrying
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+  }
+  return false;
 }
 

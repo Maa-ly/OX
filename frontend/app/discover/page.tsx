@@ -286,25 +286,27 @@ function DiscoverPageContent() {
 
     setSubmitting(true);
     try {
-      const { createWalrusFlow } = await import('@/lib/utils/walrus-sdk');
+      // Use HTTP API method (bypasses coin selection issues)
+      // This method uploads directly to Walrus without requiring transaction building
+      const { storeBlobWithHttpApi } = await import('@/lib/utils/walrus-sdk');
+
+      let mediaBlobId: string | null = null;
 
       // First, handle media file if present
       if (mediaFile) {
-        const arrayBuffer = await mediaFile.arrayBuffer();
-        const blob = new Uint8Array(arrayBuffer);
-        const flow = createWalrusFlow(blob, wallet, {
-          permanent: true,
+        console.log('[handleSubmitPost] Uploading media via HTTP API...');
+        const mediaResult = await storeBlobWithHttpApi(mediaFile, currentAddress, {
           epochs: 365,
         });
-        await flow.encode();
-        setMediaFlow(flow);
-        setMediaFlowStep('encoded');
+        mediaBlobId = mediaResult.blobId;
+        console.log('[handleSubmitPost] Media uploaded:', mediaBlobId);
       }
 
       // Create post object
       const postData = {
         content: newPost,
         mediaType: mediaType,
+        mediaBlobId: mediaBlobId, // Include media blob ID if present
         ipTokenIds: selectedIPTokens,
         author: currentAddress.slice(0, 6) + "..." + currentAddress.slice(-4),
         authorAddress: currentAddress,
@@ -312,7 +314,7 @@ function DiscoverPageContent() {
         tags: [],
       };
 
-      // Create flow for post data
+      // Upload post data via HTTP API
       const postDataJson = JSON.stringify({
         post_type: 'discover_post',
         engagement_type: 'post',
@@ -323,15 +325,24 @@ function DiscoverPageContent() {
         commentsList: [],
       });
 
-      const flow = createWalrusFlow(postDataJson, wallet, {
-        permanent: true,
+      console.log('[handleSubmitPost] Uploading post data via HTTP API...');
+      const postResult = await storeBlobWithHttpApi(postDataJson, currentAddress, {
         epochs: 365,
       });
-      await flow.encode();
-      setPostFlow(flow);
-      setPostFlowStep('encoded');
+      console.log('[handleSubmitPost] Post uploaded:', postResult.blobId);
 
-      setSuccessModal({ open: true, message: "Post prepared! Click 'Register' to continue." });
+      // HTTP API handles registration automatically, so we're done!
+      setSuccessModal({ 
+        open: true, 
+        message: "Post uploaded successfully! The post will be available shortly after certification." 
+      });
+      
+      // Reset form
+      setNewPost('');
+      setMediaFile(null);
+      setMediaPreview(null);
+      setMediaType('text');
+      setSelectedIPTokens([]);
     } catch (error: any) {
       console.error("Failed to prepare post:", error);
       setErrorModal({ 
