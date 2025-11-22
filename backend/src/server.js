@@ -120,9 +120,13 @@ async function startServer() {
     logger.info('Routes configured');
     
     try {
-      scheduler = new OracleScheduler();
-      await scheduler.initialize();
-      logger.info('Oracle Scheduler initialized');
+      if (process.env.DISABLE_SCHEDULER === 'true') {
+        logger.info('Oracle Scheduler disabled by environment');
+      } else {
+        scheduler = new OracleScheduler();
+        await scheduler.initialize();
+        logger.info('Oracle Scheduler initialized');
+      }
     } catch (schedulerError) {
       logger.warn('Oracle Scheduler initialization failed (this is OK if smart contracts are not deployed yet):', schedulerError.message);
     }
