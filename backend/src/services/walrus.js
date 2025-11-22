@@ -1266,34 +1266,74 @@ export class WalrusService {
   }
 
   /**
-   * Query all blob objects from Sui by querying events
-   * This is the primary method - queries Sui directly, no backend dependency
+   * Query all blob objects from Sui by querying blob objects directly
+   * This queries Sui for blob objects, then reads blob IDs from them
+   * Then we read the actual content from Walrus aggregator
    * 
-   * @param {number} limit - Maximum number of events to query (default: 100)
+   * @param {number} limit - Maximum number of objects to query (default: 100)
    * @returns {Promise<Array<string>>} Array of blob IDs
    */
   async queryAllBlobIdsFromSui(limit = 100) {
     try {
-      logger.info('Querying Sui events for blob creation...');
+      logger.info('Querying Sui for blob objects...');
       
-      // Query Sui events for blob creation
-      // Walrus emits events when blobs are created
+      // Method 1: Query Sui for blob objects by type
+      // Walrus blob objects have type: 0x...::walrus::BlobObject
+      // We need to query all objects of this type
+      try {
+        // Query objects by type (if we know the exact type)
+        // Note: This requires knowing the package ID for walrus
+        const objects = await this.suiClient.queryObjects({
+          filter: {
+            StructType: '0x6c2547cbbc38025cf3adac45f63cb0a8d12ecf777cdc75a4971612bf97fdf6af::walrus::BlobObject',
+          },
+          options: {
+            showType: true,
+            showContent: true,
+          },
+          limit,
+        });
+
+        const blobIds = [];
+        for (const obj of objects.data) {
+          try {
+            // Extract blobId from object content
+            const content = obj.data?.content;
+            if (content && typeof content === 'object' && 'fields' in content) {
+              const blobId = content.fields?.blobId || content.fields?.id;
+              if (blobId) {
+                blobIds.push(blobId);
+              }
+            }
+          } catch (err) {
+            logger.debug(`Error extracting blobId from object ${obj.data?.objectId}:`, err.message);
+          }
+        }
+
+        if (blobIds.length > 0) {
+          logger.info(`Found ${blobIds.length} blob IDs from Sui blob objects`);
+          return blobIds;
+        }
+      } catch (typeQueryError) {
+        logger.debug('Failed to query blob objects by type, trying events:', typeQueryError.message);
+      }
+
+      // Method 2: Fallback to querying events
+      logger.info('Querying Sui events for blob creation...');
       const events = await this.suiClient.queryEvents({
         query: {
           MoveModule: {
             package: '0x6c2547cbbc38025cf3adac45f63cb0a8d12ecf777cdc75a4971612bf97fdf6af', // Walrus system object (testnet)
             module: 'walrus',
-            event: 'BlobCreated', // Event name when blob is created
+            event: 'BlobCreated',
           },
         },
         limit,
-        order: 'descending', // Newest first
+        order: 'descending',
       });
 
       const blobIds = [];
       for (const event of events.data) {
-        // Extract blobId from event data
-        // Event structure may vary, try multiple possible fields
         const blobId = event.parsedJson?.blobId || 
                       event.parsedJson?.blob_id ||
                       event.parsedJson?.id ||
@@ -1306,8 +1346,7 @@ export class WalrusService {
       logger.info(`Found ${blobIds.length} blob IDs from Sui events`);
       return blobIds;
     } catch (error) {
-      logger.warn('Failed to query blob IDs from Sui events:', error.message);
-      // Return empty array - will fall back to other methods
+      logger.warn('Failed to query blob IDs from Sui:', error.message);
       return [];
     }
   }
