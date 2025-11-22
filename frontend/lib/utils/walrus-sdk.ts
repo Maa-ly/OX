@@ -1288,28 +1288,56 @@ export async function storeBlobWithHttpApi(
 
     // Construct upload URL
     const epochs = options.epochs || 5;
+    // Try without send_object_to first - Walrus backend might have issues finding coins
+    // If that fails, we can retry with send_object_to
     let uploadUrl = `${WALRUS_PUBLISHER_URL}/v1/blobs?epochs=${epochs}`;
-    if (userAddress) {
-      uploadUrl += `&send_object_to=${userAddress}`;
-    }
-
+    
     console.log('[storeBlobWithHttpApi] Uploading to Walrus HTTP API...', {
       url: uploadUrl,
       dataSize: fileData.byteLength,
       userAddress,
       epochs,
+      note: userAddress ? 'Will try with send_object_to parameter' : 'Uploading without ownership',
     });
 
-    const response = await axios.put<WalrusUploadResponse>(
-      uploadUrl,
-      fileData,
-      {
-        headers: {
-          'Content-Type': 'application/octet-stream',
-        },
-        timeout: 60000, // 60 seconds
+    let response: import('axios').AxiosResponse<WalrusUploadResponse>;
+    
+    // First, try without send_object_to to avoid coin selection issues
+    try {
+      response = await axios.put<WalrusUploadResponse>(
+        uploadUrl,
+        fileData,
+        {
+          headers: {
+            'Content-Type': 'application/octet-stream',
+          },
+          timeout: 60000, // 60 seconds
+        }
+      );
+    } catch (firstError: any) {
+      // If it fails with coin selection error and we have userAddress, try with send_object_to
+      if (userAddress && firstError.response?.data?.error?.message?.includes('WAL coins')) {
+        console.warn('[storeBlobWithHttpApi] First attempt failed with coin error, retrying with send_object_to...');
+        const retryUrl = `${uploadUrl}&send_object_to=${userAddress}`;
+        try {
+          response = await axios.put<WalrusUploadResponse>(
+            retryUrl,
+            fileData,
+            {
+              headers: {
+                'Content-Type': 'application/octet-stream',
+              },
+              timeout: 60000,
+            }
+          );
+        } catch (retryError: any) {
+          // If retry also fails, throw the original error with more context
+          throw firstError;
+        }
+      } else {
+        throw firstError;
       }
-    );
+    }
 
     // Extract blob ID from response
     const blobId = response.data.newlyCreated?.blobObject.blobId || 
@@ -1347,10 +1375,21 @@ export async function storeBlobWithHttpApi(
         throw new Error('Service unavailable: Walrus endpoint not found. The service may be temporarily down.');
       }
       if (error.response && error.response.status >= 500) {
-        throw new Error('Server error: Walrus service is experiencing issues. Please try again later.');
+        const errorMessage = error.response?.data?.error?.message || error.response?.data?.message;
+        if (errorMessage?.includes('WAL coins') || errorMessage?.includes('sufficient balance')) {
+          throw new Error(
+            `Walrus backend cannot find your WAL tokens: ${errorMessage}. ` +
+            `This might be because: ` +
+            `1. Your WAL tokens are locked or in a state Walrus cannot access, ` +
+            `2. There's a timing issue with coin queries, ` +
+            `3. Your coins need to be split into smaller amounts. ` +
+            `Please try splitting your WAL coins or contact Walrus support.`
+          );
+        }
+        throw new Error(`Server error: Walrus service is experiencing issues (${errorMessage || '500 Internal Server Error'}). Please try again later.`);
       }
       
-      const message = error.response?.data?.message || error.message;
+      const message = error.response?.data?.error?.message || error.response?.data?.message || error.message;
       throw new Error(`Failed to upload to Walrus: ${message}`);
     }
     throw new Error(`Failed to upload to Walrus: ${error instanceof Error ? error.message : 'Unknown error'}`);
