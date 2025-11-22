@@ -248,9 +248,19 @@ function DiscoverPageContent() {
       return;
     }
 
-    if (!wallet || !wallet.connected || !wallet.account?.address) {
+    // Check if we have a connection (either wallet-kit or zkLogin)
+    if (!isConnected && !zkLoginAddress) {
       setErrorModal({ open: true, message: 'Please connect your wallet to post' });
       return;
+    }
+
+    // For wallet transactions, we need the wallet object
+    // If using zkLogin, we don't need wallet.connected, but for wallet transactions we do
+    // Check this when we actually need to execute the transaction
+    if (!zkLoginAddress && (!wallet || !wallet.connected)) {
+      // Wallet-kit might not have reconnected yet, but store has connection
+      // Try to proceed - the transaction will fail with a better error if wallet isn't ready
+      console.warn('[handleSubmitPost] Wallet-kit not connected but store has connection. Proceeding - transaction may fail if wallet not ready.');
     }
 
     // Check balance before proceeding
