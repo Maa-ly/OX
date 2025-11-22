@@ -271,59 +271,68 @@ async function signAndExecuteTransaction({
     }
   }
 
-  try {
-    // Approach 1: Try letting the wallet build the transaction
-    // This allows the wallet to properly select WAL coin objects from the user's wallet
-    // Some wallets need to build transactions themselves to handle coin selection correctly
-    console.log('[signAndExecuteTransaction] Attempting to let wallet build transaction (for proper coin selection)...');
-    
     try {
-      // Ensure sender is set before passing to wallet
-      if (transaction instanceof Transaction && typeof transaction.setSender === 'function') {
-        transaction.setSender(walletAddress);
-      }
+      // Approach 1: Try letting the wallet build the transaction
+      // This allows the wallet to properly select WAL coin objects from the user's wallet
+      // Some wallets need to build transactions themselves to handle coin selection correctly
+      console.log('[signAndExecuteTransaction] Attempting to let wallet build transaction (for proper coin selection)...');
       
-      // Pass the Transaction object directly - let wallet handle building
-      // This is important for WAL token selection as the wallet knows which coins are available
-      const result = await wallet.signAndExecuteTransactionBlock({
-        transactionBlock: transaction as any, // Pass Transaction object, not built bytes
-        options: {
-          showEffects: true,
-          showObjectChanges: true,
-        },
-      });
-      
-      console.log('[signAndExecuteTransaction] Wallet built and signed transaction successfully');
-      
-      if (!result?.digest) {
-        throw new Error('Transaction did not return a digest');
-      }
-      
-      return { digest: result.digest };
-    } catch (walletBuildError: any) {
-      // If wallet can't build Transaction object (e.g., "$Intent, $kind" error),
-      // fall back to building it ourselves
-      const errorMsg = walletBuildError?.message || String(walletBuildError);
-      console.warn('[signAndExecuteTransaction] Wallet couldn\'t build Transaction object, trying pre-built approach...', {
-        error: errorMsg,
-        errorName: walletBuildError?.name,
-        // Check if it's a coin selection error even in wallet build
-        isCoinError: errorMsg.includes('Not enough coins') || errorMsg.includes('satisfy requested balance'),
-      });
-      
-      // If wallet build failed due to coin selection, provide helpful error
-      if (errorMsg.includes('Not enough coins') || errorMsg.includes('satisfy requested balance')) {
-        const requiredInfo = estimatedCostMist 
-          ? `Transaction requires ${(Number(estimatedCostMist) / 1e9).toFixed(6)} WAL, but wallet has ${(Number(walBalance) / 1e9).toFixed(6)} WAL. `
-          : '';
-        throw new Error(
-          `Wallet couldn't select WAL tokens for transaction. ` +
-          requiredInfo +
-          `Wallet has ${walBalance.toString()} WAL tokens (${(Number(walBalance) / 1e9).toFixed(6)} WAL) across ${walCoins.length} coin object(s). ` +
-          `Please ensure your WAL tokens are unlocked and accessible in your wallet. ` +
-          `If the issue persists, try refreshing your wallet connection or splitting your WAL coins into smaller amounts.`
-        );
-      }
+      try {
+        // Ensure sender is set before passing to wallet
+        if (transaction instanceof Transaction && typeof transaction.setSender === 'function') {
+          transaction.setSender(walletAddress);
+        }
+        
+        // Log transaction details before passing to wallet
+        console.log('[signAndExecuteTransaction] Transaction details before wallet build:', {
+          hasSetSender: true,
+          sender: walletAddress,
+          transactionType: transaction?.constructor?.name,
+          // Try to inspect transaction internals if possible
+          transactionKeys: Object.keys(transaction || {}).slice(0, 10),
+        });
+        
+        // Pass the Transaction object directly - let wallet handle building
+        // This is important for WAL token selection as the wallet knows which coins are available
+        const result = await wallet.signAndExecuteTransactionBlock({
+          transactionBlock: transaction as any, // Pass Transaction object, not built bytes
+          options: {
+            showEffects: true,
+            showObjectChanges: true,
+          },
+        });
+        
+        console.log('[signAndExecuteTransaction] Wallet built and signed transaction successfully');
+        
+        if (!result?.digest) {
+          throw new Error('Transaction did not return a digest');
+        }
+        
+        return { digest: result.digest };
+      } catch (walletBuildError: any) {
+        // If wallet can't build Transaction object (e.g., "$Intent, $kind" error),
+        // fall back to building it ourselves
+        const errorMsg = walletBuildError?.message || String(walletBuildError);
+        console.warn('[signAndExecuteTransaction] Wallet couldn\'t build Transaction object, trying pre-built approach...', {
+          error: errorMsg,
+          errorName: walletBuildError?.name,
+          // Check if it's a coin selection error even in wallet build
+          isCoinError: errorMsg.includes('Not enough coins') || errorMsg.includes('satisfy requested balance'),
+        });
+        
+        // If wallet build failed due to coin selection, provide helpful error
+        if (errorMsg.includes('Not enough coins') || errorMsg.includes('satisfy requested balance')) {
+          const requiredInfo = estimatedCostMist 
+            ? `Transaction requires ${(Number(estimatedCostMist) / 1e9).toFixed(6)} WAL, but wallet has ${(Number(walBalance) / 1e9).toFixed(6)} WAL. `
+            : '';
+          throw new Error(
+            `Wallet couldn't select WAL tokens for transaction. ` +
+            requiredInfo +
+            `Wallet has ${walBalance.toString()} WAL tokens (${(Number(walBalance) / 1e9).toFixed(6)} WAL) across ${walCoins.length} coin object(s). ` +
+            `Please ensure your WAL tokens are unlocked and accessible in your wallet. ` +
+            `If the issue persists, try refreshing your wallet connection or splitting your WAL coins into smaller amounts.`
+          );
+        }
       
       // Approach 2: Build the transaction ourselves and pass built bytes
       // We already have coin data from the pre-check above
@@ -486,6 +495,13 @@ async function signAndExecuteTransaction({
         // The transaction builder queries coins using the sender address
         // The Walrus SDK's transaction should handle WAL coin selection internally
         // Note: The builder queries coins from the RPC, so ensure the sender is set correctly
+        
+        // Add a small delay before building to ensure RPC has latest coin state
+        // Sometimes there's a timing issue where coins aren't immediately queryable
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        // Try building - the builder will query coins for the sender
+        // The Walrus SDK's transaction builder should automatically select WAL coins
         builtTx = await transaction.build({ 
           client: suiClient,
           // Ensure the sender is set so coin selection works
