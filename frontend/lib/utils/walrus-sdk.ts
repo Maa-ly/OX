@@ -1288,8 +1288,6 @@ export async function storeBlobWithHttpApi(
 
     // Construct upload URL
     const epochs = options.epochs || 5;
-    // Try without send_object_to first - Walrus backend might have issues finding coins
-    // If that fails, we can retry with send_object_to
     let uploadUrl = `${WALRUS_PUBLISHER_URL}/v1/blobs?epochs=${epochs}`;
     
     console.log('[storeBlobWithHttpApi] Uploading to Walrus HTTP API...', {
@@ -1297,47 +1295,25 @@ export async function storeBlobWithHttpApi(
       dataSize: fileData.byteLength,
       userAddress,
       epochs,
-      note: userAddress ? 'Will try with send_object_to parameter' : 'Uploading without ownership',
+      note: userAddress ? 'Will include send_object_to parameter' : 'Uploading without ownership',
     });
 
-    let response: import('axios').AxiosResponse<WalrusUploadResponse>;
-    
-    // First, try without send_object_to to avoid coin selection issues
-    try {
-      response = await axios.put<WalrusUploadResponse>(
-        uploadUrl,
-        fileData,
-        {
-          headers: {
-            'Content-Type': 'application/octet-stream',
-          },
-          timeout: 60000, // 60 seconds
-        }
-      );
-    } catch (firstError: any) {
-      // If it fails with coin selection error and we have userAddress, try with send_object_to
-      if (userAddress && firstError.response?.data?.error?.message?.includes('WAL coins')) {
-        console.warn('[storeBlobWithHttpApi] First attempt failed with coin error, retrying with send_object_to...');
-        const retryUrl = `${uploadUrl}&send_object_to=${userAddress}`;
-        try {
-          response = await axios.put<WalrusUploadResponse>(
-            retryUrl,
-            fileData,
-            {
-              headers: {
-                'Content-Type': 'application/octet-stream',
-              },
-              timeout: 60000,
-            }
-          );
-        } catch (retryError: any) {
-          // If retry also fails, throw the original error with more context
-          throw firstError;
-        }
-      } else {
-        throw firstError;
-      }
+    // Add send_object_to if userAddress is provided
+    // Note: Even without send_object_to, Walrus backend still needs WAL coins to pay for storage
+    if (userAddress) {
+      uploadUrl += `&send_object_to=${userAddress}`;
     }
+
+    const response = await axios.put<WalrusUploadResponse>(
+      uploadUrl,
+      fileData,
+      {
+        headers: {
+          'Content-Type': 'application/octet-stream',
+        },
+        timeout: 60000, // 60 seconds
+      }
+    );
 
     // Extract blob ID from response
     const blobId = response.data.newlyCreated?.blobObject.blobId || 
@@ -1377,13 +1353,18 @@ export async function storeBlobWithHttpApi(
       if (error.response && error.response.status >= 500) {
         const errorMessage = error.response?.data?.error?.message || error.response?.data?.message;
         if (errorMessage?.includes('WAL coins') || errorMessage?.includes('sufficient balance')) {
+          // This is a critical issue - Walrus backend cannot find WAL coins
+          // Even though the user has coins and RPC can see them
           throw new Error(
-            `Walrus backend cannot find your WAL tokens: ${errorMessage}. ` +
-            `This might be because: ` +
-            `1. Your WAL tokens are locked or in a state Walrus cannot access, ` +
-            `2. There's a timing issue with coin queries, ` +
-            `3. Your coins need to be split into smaller amounts. ` +
-            `Please try splitting your WAL coins or contact Walrus support.`
+            `Walrus backend cannot find your WAL tokens: "${errorMessage}". ` +
+            `\n\nThis is a known issue with Walrus backend coin selection. ` +
+            `\n\nPossible solutions:` +
+            `\n1. Split your WAL coins: Send small amounts (0.1 WAL) to yourself to create multiple coin objects` +
+            `\n2. Wait and retry: Sometimes there's a timing issue with coin queries` +
+            `\n3. Check wallet: Ensure your WAL tokens aren't locked or frozen` +
+            `\n4. Contact Walrus support: This appears to be a backend issue` +
+            `\n\nYour address: ${userAddress || 'unknown'}` +
+            `\nError from: ${error.response?.data?.error?.domain || 'Walrus backend'}`
           );
         }
         throw new Error(`Server error: Walrus service is experiencing issues (${errorMessage || '500 Internal Server Error'}). Please try again later.`);
@@ -1394,6 +1375,129 @@ export async function storeBlobWithHttpApi(
     }
     throw new Error(`Failed to upload to Walrus: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
+}
+
+/**
+ * Split WAL coins into smaller amounts
+ * This helps resolve coin selection issues by creating multiple smaller coin objects
+ * 
+ * @param wallet - Wallet adapter from useWallet() hook
+ * @param options - Split options
+ * @returns Promise with transaction digest
+ */
+export async function splitWALCoins(
+  wallet: WalletAdapter,
+  options: {
+    network?: 'testnet' | 'mainnet';
+    amounts?: number[]; // Amounts in WAL (e.g., [0.1, 0.1, 0.1] to create 3 coins of 0.1 WAL each)
+    numSplits?: number; // Number of splits to make (default: 3)
+    splitAmount?: number; // Amount per split in WAL (default: 0.1)
+  } = {}
+): Promise<{ digest: string; message: string }> {
+  if (!wallet || !wallet.connected || !wallet.account?.address) {
+    throw new Error('Wallet not connected');
+  }
+
+  const network = options.network || 'testnet';
+  const walletAddress = wallet.account.address;
+  const suiClient = new SuiClient({
+    url: getFullnodeUrl(network),
+  });
+
+  const WAL_COIN_TYPE = '0x8270feb7375eee355e64fdb69c50abb6b5f9393a722883c1cf45f8e26048810a::wal::WAL';
+
+  // Get WAL coins
+  const allCoins = await suiClient.getAllCoins({
+    owner: walletAddress,
+  });
+  const walCoins = allCoins.data.filter(c => c.coinType === WAL_COIN_TYPE || c.coinType.includes('wal::WAL'));
+
+  if (walCoins.length === 0) {
+    throw new Error('No WAL coins found in wallet');
+  }
+
+  // Use the first (largest) coin for splitting
+  const coinToSplit = walCoins[0];
+  const coinBalance = BigInt(coinToSplit.balance);
+  const coinBalanceWAL = Number(coinBalance) / 1e9;
+
+  console.log('[splitWALCoins] Found coin to split:', {
+    coinId: coinToSplit.coinObjectId,
+    balance: coinBalance.toString(),
+    balanceWAL: coinBalanceWAL,
+  });
+
+  // Determine split amounts
+  let splitAmounts: bigint[];
+  if (options.amounts) {
+    // Use provided amounts
+    splitAmounts = options.amounts.map(amt => BigInt(Math.floor(amt * 1e9)));
+  } else {
+    // Default: split into 3 coins of 0.1 WAL each
+    const numSplits = options.numSplits || 3;
+    const splitAmountWAL = options.splitAmount || 0.1;
+    const splitAmountMist = BigInt(Math.floor(splitAmountWAL * 1e9));
+    splitAmounts = Array(numSplits).fill(splitAmountMist);
+  }
+
+  // Calculate total amount to split
+  const totalSplitAmount = splitAmounts.reduce((sum, amt) => sum + amt, BigInt(0));
+  
+  // Ensure we have enough balance (leave some for gas)
+  const minRequired = totalSplitAmount + BigInt(1000000); // Add 0.001 WAL for gas
+  if (coinBalance < minRequired) {
+    throw new Error(
+      `Insufficient balance. Need at least ${(Number(minRequired) / 1e9).toFixed(6)} WAL, ` +
+      `but coin has ${coinBalanceWAL.toFixed(6)} WAL. ` +
+      `Try smaller split amounts or fewer splits.`
+    );
+  }
+
+  console.log('[splitWALCoins] Splitting coin:', {
+    coinId: coinToSplit.coinObjectId,
+    splits: splitAmounts.length,
+    amounts: splitAmounts.map(a => (Number(a) / 1e9).toFixed(6) + ' WAL'),
+    totalSplit: (Number(totalSplitAmount) / 1e9).toFixed(6) + ' WAL',
+  });
+
+  // Create transaction to split coins
+  const tx = new Transaction();
+  tx.setSender(walletAddress);
+
+  // Split the coin into multiple smaller coins
+  // splitCoins takes (coin, amounts[]) and returns the split coins
+  const splitCoins = tx.splitCoins(
+    tx.object(coinToSplit.coinObjectId),
+    splitAmounts
+  );
+
+  // Transfer the split coins back to the sender (so they stay in the wallet)
+  // The split coins are returned as a vector, we need to transfer each one
+  for (let i = 0; i < splitAmounts.length; i++) {
+    tx.transferObjects([splitCoins[i]], walletAddress);
+  }
+
+  // Sign and execute
+  const result = await wallet.signAndExecuteTransactionBlock({
+    transactionBlock: tx as any,
+    options: {
+      showEffects: true,
+      showObjectChanges: true,
+    },
+  });
+
+  const message = `Successfully split WAL coin into ${splitAmounts.length} smaller coins. ` +
+    `Amounts: ${splitAmounts.map(a => (Number(a) / 1e9).toFixed(6) + ' WAL').join(', ')}`;
+
+  console.log('[splitWALCoins] Split successful:', {
+    digest: result.digest,
+    message,
+  });
+
+  return {
+    digest: result.digest,
+    message,
+  };
 }
 
 /**
