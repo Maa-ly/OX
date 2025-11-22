@@ -1211,23 +1211,21 @@ export class WalrusService {
   }
 
   /**
-   * Get all posts from Walrus directly (queries Sui for blob objects)
+   * Get all posts from Walrus using stored blob IDs
    * 
-   * This queries Walrus/Sui directly for all posts, similar to how we query tokens.
-   * It doesn't rely on an in-memory index, so posts persist across server restarts.
-   * 
-   * Since blob objects are owned by users, we query events or known addresses.
-   * For now, we'll query events for blob creation events.
+   * Reads all blob IDs from persistent storage and fetches posts from Walrus.
+   * This is much simpler and more reliable than querying Sui events.
    * 
    * @param {Object} options - Query options
    * @param {string} options.userAddress - Filter by user address (optional)
    * @param {string} options.ipTokenId - Filter by IP token ID (optional)
+   * @param {Array<string>} options.blobIds - Use specific blob IDs (optional, if not provided uses stored blob IDs)
    * @returns {Promise<Array>} Array of post objects
    */
   async getAllPosts(options = {}) {
     try {
-      const { userAddress, ipTokenId } = options;
-      logger.info('Getting all posts from Walrus directly', { userAddress, ipTokenId });
+      const { userAddress, ipTokenId, blobIds: providedBlobIds } = options;
+      logger.info('Getting all posts from Walrus using stored blob IDs', { userAddress, ipTokenId });
 
       let allPosts = [];
 
@@ -1236,146 +1234,32 @@ export class WalrusService {
         const userPosts = await this.getContributionsByOwner(userAddress);
         allPosts = userPosts;
       } else {
-        // Query all posts - query Sui for all BlobObject types
-        // Blob objects are owned by users, so we query by type
-        try {
-          // Query all objects of type BlobObject
-          // Walrus blob objects have type: 0x...::walrus::BlobObject
-          // We'll query for all BlobObject types owned by any address
-          
-          // Note: Sui doesn't have a direct "get all objects by type" API
-          // But we can query objects by type using queryObjects
-          // However, we need to know the exact type string
-          
-          // Try querying by type - this might require pagination
-          const walrusPackageId = '0x8270feb7375eee355e64fdb69c50abb6b5f9393a722883c1cf45f8e26048810a'; // Testnet
-          const blobObjectType = `${walrusPackageId}::walrus::BlobObject`;
-          
-          logger.info(`Querying Sui for blob objects of type: ${blobObjectType}`);
-          
-          // Query objects by type (this queries all objects of this type)
-          // Note: This might be slow if there are many blob objects
-          let cursor = null;
-          const blobIds = new Set();
-          
-          do {
-            const result = await this.suiClient.queryObjects({
-              filter: {
-                StructType: blobObjectType,
-              },
-              options: {
-                showType: true,
-                showContent: true,
-                showOwner: true,
-              },
-              limit: 50, // Query in batches
-              cursor,
-            });
+        // Get blob IDs from storage (persistent, survives server restarts)
+        const { blobStorage } = await import('./blob-storage.js');
+        const blobIds = providedBlobIds || blobStorage.getAllBlobIds();
+        
+        logger.info(`Found ${blobIds.length} blob IDs in storage`);
 
-            // Extract blob IDs from objects
-            for (const obj of result.data) {
-              try {
-                if (obj.data?.content && typeof obj.data.content === 'object') {
-                  const content = obj.data.content;
-                  // Extract blobId from object content
-                  const blobId = content.fields?.blobId || 
-                               content.blobId || 
-                               content.fields?.id ||
-                               obj.data.objectId;
-                  
-                  if (blobId) {
-                    blobIds.add(blobId);
-                  }
-                }
-              } catch (err) {
-                logger.debug(`Error processing blob object ${obj.data?.objectId}:`, err.message);
-              }
-            }
-
-            cursor = result.hasNextPage ? result.nextCursor : null;
-            logger.info(`Found ${blobIds.size} blob IDs so far (queried ${result.data.length} objects)`);
-          } while (cursor);
-
-          logger.info(`Total blob IDs found: ${blobIds.size}`);
-
-          // Read each blob to get post data
-          for (const blobId of blobIds) {
-            try {
-              const contribution = await this.readContribution(blobId);
-              if (contribution && (contribution.post_type === 'discover_post' || contribution.engagement_type === 'post')) {
-                allPosts.push({
-                  id: blobId,
-                  blobId,
-                  ...contribution,
-                });
-              }
-            } catch (error) {
-              // Blob might not be certified yet or might not be a post
-              logger.debug(`Could not read blob ${blobId}:`, error.message);
-            }
-          }
-        } catch (queryError) {
-          logger.error('Failed to query blob objects by type:', queryError);
-          logger.error('Query error details:', {
-            message: queryError.message,
-            stack: queryError.stack,
-            name: queryError.name,
-          });
-          
-          // Fallback: Try querying events instead
-          logger.info('Trying fallback: query events for blob creation');
+        // Read each blob to get post data
+        for (const blobId of blobIds) {
           try {
-            const walrusPackageId = '0x8270feb7375eee355e64fdb69c50abb6b5f9393a722883c1cf45f8e26048810a';
-            const events = await this.suiClient.queryEvents({
-              query: {
-                MoveModule: {
-                  package: walrusPackageId,
-                  module: 'walrus',
-                },
-              },
-              limit: 1000,
-              order: 'descending',
-            });
-
-            logger.info(`Found ${events.data.length} events from Walrus module`);
-            
-            // Try to extract blob IDs from events
-            const blobIds = new Set();
-            for (const event of events.data) {
-              const eventData = event.parsedJson || event.bcs || event.event || {};
-              logger.debug('Event data:', JSON.stringify(eventData, null, 2));
-              
-              // Try various field names
-              const blobId = eventData.blobId || eventData.blob_id || eventData.id || 
-                           eventData.blobObject?.blobId || eventData.blobObject?.id;
-              
-              if (blobId) {
-                blobIds.add(blobId);
-              }
+            const contribution = await this.readContribution(blobId);
+            if (contribution && (contribution.post_type === 'discover_post' || contribution.engagement_type === 'post')) {
+              allPosts.push({
+                id: blobId,
+                blobId,
+                ...contribution,
+              });
             }
-
-            logger.info(`Extracted ${blobIds.size} blob IDs from events`);
-            
-            // Read blobs
-            for (const blobId of blobIds) {
-              try {
-                const contribution = await this.readContribution(blobId);
-                if (contribution && (contribution.post_type === 'discover_post' || contribution.engagement_type === 'post')) {
-                  allPosts.push({
-                    id: blobId,
-                    blobId,
-                    ...contribution,
-                  });
-                }
-              } catch (error) {
-                logger.debug(`Could not read blob ${blobId}:`, error.message);
-              }
-            }
-          } catch (eventError) {
-            logger.error('Event fallback also failed:', eventError.message);
-            logger.warn('Cannot query posts from Walrus - both type query and event query failed');
-            allPosts = [];
+          } catch (error) {
+            // Blob might not be certified yet or might not be a post
+            logger.debug(`Could not read blob ${blobId}:`, error.message);
           }
+        }
+
+        // If no blob IDs in storage, log a warning
+        if (blobIds.length === 0) {
+          logger.warn('No blob IDs found in storage. Posts will be empty until users upload posts.');
         }
       }
 

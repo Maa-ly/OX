@@ -1250,11 +1250,34 @@ export interface WalrusUploadResponse {
   newlyCreated?: {
     blobObject: {
       id: string;
+      registeredEpoch: number;
       blobId: string;
+      size: number;
+      encodingType: string;
+      certifiedEpoch: number | null;
+      storage: {
+        id: string;
+        startEpoch: number;
+        endEpoch: number;
+        storageSize: number;
+      };
+      deletable: boolean;
     };
+    resourceOperation?: {
+      registerFromScratch?: {
+        encodedLength: number;
+        epochsAhead: number;
+      };
+    };
+    cost?: number;
   };
   alreadyCertified?: {
     blobId: string;
+    event?: {
+      txDigest: string;
+      eventSeq: string;
+    };
+    endEpoch?: number;
   };
 }
 
@@ -1262,6 +1285,7 @@ export interface WalrusBlob {
   blobId: string;
   walrusUrl: string;
   originalUrl?: string;
+  walrusResponse?: WalrusUploadResponse; // Full Walrus API response
 }
 
 /**
@@ -1305,9 +1329,12 @@ export class WalrusService {
         throw new Error('Failed to get blob ID from Walrus response');
       }
 
+      // Return full response data so backend can store it
       return {
         blobId,
         walrusUrl: this.getBlobUrl(blobId),
+        // Include full Walrus response for storage
+        walrusResponse: response.data,
       };
     } catch (error) {
       console.error('Walrus upload failed:', error);
@@ -1371,9 +1398,12 @@ export class WalrusService {
         throw new Error('Failed to get blob ID from Walrus response');
       }
 
+      // Return full response data so backend can store it
       return {
         blobId,
         walrusUrl: this.getBlobUrl(blobId),
+        // Include full Walrus response for storage
+        walrusResponse: response.data,
       };
     } catch (error) {
       console.error('Walrus metadata upload failed:', error);
@@ -1434,7 +1464,7 @@ export async function storeBlobWithHttpApi(
     epochs?: number;
     network?: 'testnet' | 'mainnet';
   } = {}
-): Promise<{ blobId: string; walrusUrl: string }> {
+): Promise<{ blobId: string; walrusUrl: string; walrusResponse?: WalrusUploadResponse }> {
   // Convert data to File/Blob format that WalrusService expects
   if (data instanceof File) {
     return await WalrusService.uploadFile(data, userAddress);

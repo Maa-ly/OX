@@ -268,6 +268,7 @@ function DiscoverPageContent() {
         },
         body: JSON.stringify({
           blobId: postResult.blobId,
+          walrusResponse: postResult.walrusResponse, // Include full Walrus response
           post: {
             post_type: 'discover_post',
             engagement_type: 'post',

@@ -3,6 +3,7 @@ import multer from 'multer';
 import { logger } from '../utils/logger.js';
 import { WalrusService } from '../services/walrus.js';
 import { WalrusIndexerService } from '../services/walrus-indexer.js';
+import { blobStorage } from '../services/blob-storage.js';
 
 const router = express.Router();
 const walrusService = new WalrusService();
@@ -31,7 +32,7 @@ const upload = multer({
  */
 router.post('/index', async (req, res, next) => {
   try {
-    const { blobId, post } = req.body;
+    const { blobId, post, walrusResponse } = req.body;
 
     if (!blobId) {
       return res.status(400).json({
@@ -46,6 +47,29 @@ router.post('/index', async (req, res, next) => {
       : ['all']; // Special token ID for posts without specific IP tokens
 
     logger.info(`Indexing post for IP tokens: ${ipTokenIds.join(', ')}, blobId: ${blobId}`);
+
+    // Store blob ID and full Walrus response persistently (survives server restarts)
+    // This stores all the information from Walrus: blobId, objectId, epochs, cost, etc.
+    const metadata = walrusResponse ? {
+      walrusResponse,
+      blobId,
+      postType: post?.post_type || 'discover_post',
+      authorAddress: post?.authorAddress,
+      timestamp: post?.timestamp || Date.now(),
+      indexedAt: Date.now(),
+    } : {
+      blobId,
+      postType: post?.post_type || 'discover_post',
+      authorAddress: post?.authorAddress,
+      timestamp: post?.timestamp || Date.now(),
+      indexedAt: Date.now(),
+    };
+    
+    await blobStorage.addBlobId(blobId, metadata);
+    logger.info(`Stored blob ID and metadata persistently: ${blobId}`, {
+      hasFullResponse: !!walrusResponse,
+      objectId: walrusResponse?.newlyCreated?.blobObject?.id,
+    });
 
     // Index the post for each IP token (already stored on Walrus by user)
     // This makes the post visible to everyone when they query posts
@@ -66,7 +90,7 @@ router.post('/index', async (req, res, next) => {
     }
 
     // Log index state for debugging
-    logger.info(`Post indexed successfully. Index now has ${ipTokenIds.length} token(s) with this post`);
+    logger.info(`Post indexed successfully. Total blob IDs stored: ${blobStorage.getCount()}`);
 
     res.json({
       success: true,
