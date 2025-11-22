@@ -202,16 +202,42 @@ async function signAndExecuteTransaction({
         }
       }
 
-      // Query wallet's coins to verify they're accessible
+      // Query wallet's coins to verify they're accessible and get detailed info
       // This helps debug coin selection issues
+      let walCoins: any[] = [];
+      let walBalance = BigInt(0);
       try {
         const allCoins = await suiClient.getAllCoins({
           owner: walletAddress,
         });
+        
+        // Get WAL coins specifically
+        walCoins = allCoins.data.filter(c => c.coinType.includes('wal::WAL'));
+        walBalance = walCoins.reduce((sum, coin) => sum + BigInt(coin.balance || 0), BigInt(0));
+        
+        // Also get WAL balance using getBalance
+        let walBalanceFromAPI = BigInt(0);
+        try {
+          const balance = await suiClient.getBalance({
+            owner: walletAddress,
+            coinType: '0x8270feb7375eee355e64fdb69c50abb6b5f9393a722883c1cf45f8e26048810a::wal::WAL',
+          });
+          walBalanceFromAPI = BigInt(balance.totalBalance);
+        } catch (balanceError) {
+          console.warn('[signAndExecuteTransaction] Could not get WAL balance:', balanceError);
+        }
+        
         console.log('[signAndExecuteTransaction] Wallet coins query:', {
           totalCoins: allCoins.data.length,
           coinTypes: [...new Set(allCoins.data.map(c => c.coinType))].slice(0, 5),
-          hasWALCoins: allCoins.data.some(c => c.coinType.includes('wal::WAL')),
+          hasWALCoins: walCoins.length > 0,
+          walCoinCount: walCoins.length,
+          walBalanceFromCoins: walBalance.toString(),
+          walBalanceFromAPI: walBalanceFromAPI.toString(),
+          walCoinObjects: walCoins.map(c => ({
+            objectId: c.coinObjectId,
+            balance: c.balance,
+          })).slice(0, 3), // Show first 3 coin objects
         });
       } catch (coinQueryError) {
         console.warn('[signAndExecuteTransaction] Could not query wallet coins:', coinQueryError);
@@ -221,11 +247,36 @@ async function signAndExecuteTransaction({
       // The build() method will query coins for the sender address
       // It needs the sender to be set to know which address to query coins for
       console.log('[signAndExecuteTransaction] Building transaction with sender:', walletAddress);
-      const builtTx = await transaction.build({ 
-        client: suiClient,
-        // The sender should already be set, but we can also pass it explicitly if needed
+      console.log('[signAndExecuteTransaction] Available WAL balance:', {
+        balance: walBalance.toString(),
+        coinCount: walCoins.length,
+        coins: walCoins.slice(0, 3).map(c => ({ id: c.coinObjectId, balance: c.balance })),
       });
-      console.log('[signAndExecuteTransaction] Transaction built successfully, length:', builtTx.length);
+      
+      let builtTx: Uint8Array;
+      try {
+        builtTx = await transaction.build({ 
+          client: suiClient,
+          // The sender should already be set, but we can also pass it explicitly if needed
+        });
+        console.log('[signAndExecuteTransaction] Transaction built successfully, length:', builtTx.length);
+      } catch (buildError: any) {
+        // If build fails with coin selection error, try to get more details
+        console.error('[signAndExecuteTransaction] Transaction build failed:', {
+          error: buildError?.message,
+          errorName: buildError?.name,
+          hasWALCoins: walCoins.length > 0,
+          walBalance: walBalance.toString(),
+        });
+        
+        // The error message might contain info about what's needed
+        // For now, re-throw with more context
+        throw new Error(
+          `Failed to build transaction: ${buildError?.message}. ` +
+          `Wallet has ${walBalance.toString()} WAL tokens across ${walCoins.length} coin objects. ` +
+          `This might be a coin selection issue. Please ensure your WAL tokens are unlocked and accessible.`
+        );
+      }
 
       // Use the wallet adapter's signAndExecuteTransactionBlock method
       // Pass the built transaction (Uint8Array) to the wallet
