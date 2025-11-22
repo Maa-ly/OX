@@ -350,15 +350,50 @@ async function signAndExecuteTransaction({
       
       let builtTx: Uint8Array;
       try {
-        // Try building with the client - it should automatically select coins
-        // The transaction builder queries coins using the sender address
-        // The Walrus SDK's transaction should handle WAL coin selection internally
-        builtTx = await transaction.build({ 
-          client: suiClient,
-          // Ensure the sender is set so coin selection works
-          // The build method will query coins for the sender
-        });
-        console.log('[signAndExecuteTransaction] Transaction built successfully, length:', builtTx.length);
+      // Before building, verify coins are still accessible
+      // Sometimes there's a timing issue where coins appear available but aren't when building
+      if (walCoins.length > 0) {
+        // Double-check coin accessibility right before building
+        try {
+          const coinCheck = await suiClient.getObject({
+            id: walCoins[0].coinObjectId,
+            options: { showContent: true },
+          });
+          if (!coinCheck.data) {
+            throw new Error(`WAL coin object ${walCoins[0].coinObjectId} not found or not accessible`);
+          }
+          const coinOwner = (coinCheck.data as any).owner;
+          const ownerAddress = typeof coinOwner === 'string' ? coinOwner : coinOwner?.AddressOwner;
+          console.log('[signAndExecuteTransaction] Verified coin accessibility before building:', {
+            coinId: walCoins[0].coinObjectId,
+            owner: ownerAddress,
+            ownerMatchesSender: ownerAddress === walletAddress,
+            hasContent: !!coinCheck.data.content,
+          });
+          
+          // Verify owner matches sender
+          if (ownerAddress !== walletAddress) {
+            console.error('[signAndExecuteTransaction] Coin owner mismatch!', {
+              coinOwner: ownerAddress,
+              sender: walletAddress,
+            });
+          }
+        } catch (coinCheckError: any) {
+          console.warn('[signAndExecuteTransaction] Coin accessibility check failed:', coinCheckError);
+          // Continue anyway - the build might still work
+        }
+      }
+      
+      // Try building with the client - it should automatically select coins
+      // The transaction builder queries coins using the sender address
+      // The Walrus SDK's transaction should handle WAL coin selection internally
+      // Note: The builder queries coins from the RPC, so ensure the sender is set correctly
+      builtTx = await transaction.build({ 
+        client: suiClient,
+        // Ensure the sender is set so coin selection works
+        // The build method will query coins for the sender
+      });
+      console.log('[signAndExecuteTransaction] Transaction built successfully, length:', builtTx.length);
       } catch (buildError: any) {
         // If build fails with coin selection error, provide more helpful error message
         const errorMsg = buildError?.message || String(buildError);
