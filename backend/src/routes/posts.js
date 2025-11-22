@@ -62,12 +62,17 @@ router.post('/index', async (req, res, next) => {
           ...post,
         }
       );
+      logger.info(`Indexed post ${blobId} for token ${ipTokenId}`);
     }
+
+    // Log index state for debugging
+    logger.info(`Post indexed successfully. Index now has ${ipTokenIds.length} token(s) with this post`);
 
     res.json({
       success: true,
       blobId,
       indexed: true,
+      ipTokenIds,
       post: {
         ...post,
         walrus_blob_id: blobId,
@@ -134,55 +139,12 @@ router.get('/', async (req, res, next) => {
 
     logger.info('Fetching posts', { ipTokenId, mediaType, userAddress, limit, offset });
 
-    let allPosts = [];
-
-    // Always use index-based query to get ALL posts (visible to everyone)
-    // The indexer maintains an index of all posts indexed by IP token
-    if (ipTokenId) {
-      // Get posts for specific IP token
-      const contributions = await indexerService.queryContributionsByIP(ipTokenId, {
-        type: 'post',
-      });
-
-      allPosts = contributions
-        .filter((c) => c.post_type === 'discover_post' || c.engagement_type === 'post')
-        .map((c) => ({
-          id: c.walrus_cid || c.walrus_blob_id || c.id,
-          blobId: c.walrus_cid || c.walrus_blob_id || c.id,
-          ...c,
-        }));
-    } else {
-      // Get ALL posts from ALL tokens (everyone can see all posts)
-      // First, get all token IDs from contract
-      const { contractService } = await import('../services/contract.js');
-      const tokenIds = await contractService.getAllTokens();
-
-      // Also include "all" token for posts without specific IP tokens
-      const allTokenIds = [...tokenIds, 'all'];
-
-      logger.info(`Fetching posts from ${allTokenIds.length} IP tokens (including 'all' token)`);
-
-      for (const tokenId of allTokenIds) {
-        try {
-          const contributions = await indexerService.queryContributionsByIP(tokenId, {
-            type: 'post',
-          });
-
-          const posts = contributions
-            .filter((c) => c.post_type === 'discover_post' || c.engagement_type === 'post')
-            .map((c) => ({
-              id: c.walrus_cid || c.walrus_blob_id || c.id,
-              blobId: c.walrus_cid || c.walrus_blob_id || c.id,
-              ...c,
-            }));
-
-          allPosts.push(...posts);
-          logger.debug(`Found ${posts.length} posts for token ${tokenId}`);
-        } catch (error) {
-          logger.warn(`Failed to fetch posts for token ${tokenId}:`, error.message);
-        }
-      }
-    }
+    // Query Walrus directly (like we do for tokens) - no index needed!
+    // This ensures posts persist across server restarts
+    let allPosts = await walrusService.getAllPosts({
+      userAddress,
+      ipTokenId,
+    });
 
     // If userAddress is provided, filter to show only that user's posts
     // Otherwise, show ALL posts (everyone can see everyone's posts)
@@ -422,6 +384,110 @@ router.post('/upload-media', upload.single('file'), async (req, res, next) => {
     });
   } catch (error) {
     logger.error('Error uploading media:', error);
+    next(error);
+  }
+});
+
+/**
+ * Debug endpoint: Get index status
+ * GET /api/posts/debug/index
+ */
+router.get('/debug/index', async (req, res, next) => {
+  try {
+    // Access the indexer's internal index (for debugging)
+    const indexMap = indexerService.index || new Map();
+    const cacheMap = indexerService.blobCache || new Map();
+    
+    const indexStatus = {};
+    for (const [tokenId, blobIds] of indexMap.entries()) {
+      indexStatus[tokenId] = {
+        blobCount: blobIds.length,
+        blobIds: blobIds.slice(0, 10), // First 10 for preview
+      };
+    }
+
+    res.json({
+      success: true,
+      indexSize: indexMap.size,
+      cacheSize: cacheMap.size,
+      tokens: Object.keys(indexStatus),
+      index: indexStatus,
+      note: 'Index is in-memory and will be lost on server restart. Posts need to be re-indexed after restart.',
+    });
+  } catch (error) {
+    logger.error('Error getting index status:', error);
+    next(error);
+  }
+});
+
+/**
+ * Re-index a post by blob ID
+ * POST /api/posts/reindex
+ * 
+ * Body: { blobId: string, userAddress?: string }
+ * 
+ * If userAddress is provided, queries Walrus for that user's posts and re-indexes them.
+ * Otherwise, requires blobId to re-index a specific post.
+ */
+router.post('/reindex', async (req, res, next) => {
+  try {
+    const { blobId, userAddress } = req.body;
+
+    if (userAddress) {
+      // Re-index all posts from a user
+      logger.info(`Re-indexing all posts for user: ${userAddress}`);
+      const contributions = await walrusService.getContributionsByOwner(userAddress);
+      
+      let reindexed = 0;
+      for (const contribution of contributions) {
+        const blobId = contribution.blobId || contribution.id;
+        if (!blobId) continue;
+
+        // Extract IP token IDs from contribution
+        const ipTokenIds = contribution.ipTokenIds && Array.isArray(contribution.ipTokenIds) && contribution.ipTokenIds.length > 0
+          ? contribution.ipTokenIds
+          : ['all'];
+
+        // Re-index for each IP token
+        for (const ipTokenId of ipTokenIds) {
+          await indexerService.indexContribution(ipTokenId, blobId, contribution);
+        }
+        reindexed++;
+      }
+
+      res.json({
+        success: true,
+        reindexed,
+        userAddress,
+        message: `Re-indexed ${reindexed} posts for user ${userAddress}`,
+      });
+    } else if (blobId) {
+      // Re-index a specific post
+      logger.info(`Re-indexing post: ${blobId}`);
+      const contribution = await walrusService.readContribution(blobId);
+      
+      const ipTokenIds = contribution.ipTokenIds && Array.isArray(contribution.ipTokenIds) && contribution.ipTokenIds.length > 0
+        ? contribution.ipTokenIds
+        : ['all'];
+
+      for (const ipTokenId of ipTokenIds) {
+        await indexerService.indexContribution(ipTokenId, blobId, contribution);
+      }
+
+      res.json({
+        success: true,
+        blobId,
+        ipTokenIds,
+        message: `Re-indexed post ${blobId}`,
+      });
+    } else {
+      return res.status(400).json({
+        success: false,
+        error: 'Either blobId or userAddress is required',
+      });
+    }
+  } catch (error) {
+    logger.error('Error re-indexing:', error);
     next(error);
   }
 });

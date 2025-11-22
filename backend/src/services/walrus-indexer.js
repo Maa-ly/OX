@@ -65,6 +65,8 @@ export class WalrusIndexerService {
       // Get blob IDs from index
       const blobIds = this.index.get(ipTokenId) || [];
 
+      logger.debug(`Index has ${blobIds.length} blob IDs for token ${ipTokenId}`);
+
       // Filter by options
       let filteredBlobIds = blobIds;
 
@@ -102,7 +104,7 @@ export class WalrusIndexerService {
         }
       }
 
-      logger.info(`Found ${contributions.length} contributions for ${ipTokenId}`);
+      logger.info(`Found ${contributions.length} contributions for ${ipTokenId} (from ${filteredBlobIds.length} blob IDs)`);
       return contributions;
     } catch (error) {
       logger.error('Error querying contributions:', error);

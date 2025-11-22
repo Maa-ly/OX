@@ -1209,4 +1209,108 @@ export class WalrusService {
       throw new Error(`Failed to get contributions by owner: ${error.message}`);
     }
   }
+
+  /**
+   * Get all posts from Walrus directly (queries Sui for blob objects)
+   * 
+   * This queries Walrus/Sui directly for all posts, similar to how we query tokens.
+   * It doesn't rely on an in-memory index, so posts persist across server restarts.
+   * 
+   * Since blob objects are owned by users, we query events or known addresses.
+   * For now, we'll query events for blob creation events.
+   * 
+   * @param {Object} options - Query options
+   * @param {string} options.userAddress - Filter by user address (optional)
+   * @param {string} options.ipTokenId - Filter by IP token ID (optional)
+   * @returns {Promise<Array>} Array of post objects
+   */
+  async getAllPosts(options = {}) {
+    try {
+      const { userAddress, ipTokenId } = options;
+      logger.info('Getting all posts from Walrus directly', { userAddress, ipTokenId });
+
+      let allPosts = [];
+
+      if (userAddress) {
+        // Query posts for specific user (direct from Sui)
+        const userPosts = await this.getContributionsByOwner(userAddress);
+        allPosts = userPosts;
+      } else {
+        // Query all posts - query Sui events for blob creation
+        // Walrus emits events when blobs are created
+        try {
+          // Query events for BlobObject creation
+          // Note: This requires the Walrus package ID and event type
+          const walrusPackageId = '0x8270feb7375eee355e64fdb69c50abb6b5f9393a722883c1cf45f8e26048810a'; // Testnet
+          
+          const events = await this.suiClient.queryEvents({
+            query: {
+              MoveModule: {
+                package: walrusPackageId,
+                module: 'walrus',
+              },
+            },
+            limit: 1000, // Maximum limit
+            order: 'descending', // Newest first
+          });
+
+          logger.info(`Found ${events.data.length} blob creation events`);
+
+          // Extract blob IDs from events and read them
+          const blobIds = new Set(); // Use Set to avoid duplicates
+          
+          for (const event of events.data) {
+            // Extract blob ID from event data
+            // Event structure: { blobId: "...", ... } or { blob_id: "...", ... }
+            const eventData = event.parsedJson || event.bcs || {};
+            const blobId = eventData.blobId || eventData.blob_id || eventData.id;
+            
+            if (blobId) {
+              blobIds.add(blobId);
+            }
+          }
+
+          logger.info(`Extracted ${blobIds.size} unique blob IDs from events`);
+
+          // Read each blob to get post data
+          for (const blobId of blobIds) {
+            try {
+              const contribution = await this.readContribution(blobId);
+              if (contribution && (contribution.post_type === 'discover_post' || contribution.engagement_type === 'post')) {
+                allPosts.push({
+                  id: blobId,
+                  blobId,
+                  ...contribution,
+                });
+              }
+            } catch (error) {
+              // Blob might not be certified yet or might not be a post
+              logger.debug(`Could not read blob ${blobId}:`, error.message);
+            }
+          }
+        } catch (eventError) {
+          logger.warn('Failed to query events for blob objects:', eventError.message);
+          logger.info('Falling back to empty result - events query not available');
+          // Return empty array - caller can handle this
+          allPosts = [];
+        }
+      }
+
+      // Filter by IP token if specified
+      if (ipTokenId) {
+        allPosts = allPosts.filter(post => 
+          post.ipTokenIds && Array.isArray(post.ipTokenIds) && post.ipTokenIds.includes(ipTokenId)
+        );
+      }
+
+      // Sort by timestamp (newest first)
+      allPosts.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+      logger.info(`Found ${allPosts.length} posts from Walrus (direct query)`);
+      return allPosts;
+    } catch (error) {
+      logger.error('Error getting all posts:', error);
+      throw new Error(`Failed to get all posts: ${error.message}`);
+    }
+  }
 }
