@@ -181,6 +181,32 @@ async function signAndExecuteTransaction({
     // Filter for WAL coins specifically
     walCoins = allCoins.data.filter(c => c.coinType === WAL_COIN_TYPE || c.coinType.includes('wal::WAL'));
     
+    // Also try to get coin objects directly using getCoins if available
+    // This might give us more detailed information about coin accessibility
+    try {
+      if (walCoins.length > 0) {
+        // Get detailed coin object information
+        const coinObjectIds = walCoins.map(c => c.coinObjectId);
+        const coinObjects = await Promise.all(
+          coinObjectIds.slice(0, 5).map(id => 
+            suiClient.getObject({ id, options: { showContent: true } }).catch(() => null)
+          )
+        );
+        const validCoins = coinObjects.filter(Boolean);
+        console.log('[signAndExecuteTransaction] Coin object details:', {
+          queried: coinObjectIds.length,
+          valid: validCoins.length,
+          coinStates: validCoins.map((co: any) => ({
+            id: co?.data?.objectId,
+            owner: co?.data?.owner,
+            hasData: !!co?.data?.content,
+          })),
+        });
+      }
+    } catch (coinDetailError) {
+      console.warn('[signAndExecuteTransaction] Could not get detailed coin info:', coinDetailError);
+    }
+    
     const requiredWALFormatted = estimatedCostMist 
       ? (Number(estimatedCostMist) / 1e9).toFixed(6)
       : 'unknown';
@@ -191,11 +217,15 @@ async function signAndExecuteTransaction({
       requiredWAL: estimatedCostMist?.toString() || 'unknown',
       requiredWALFormatted: requiredWALFormatted,
       coinCount: walCoins.length,
-      coinObjects: walCoins.slice(0, 3).map(c => ({
+      coinObjects: walCoins.map(c => ({
         id: c.coinObjectId,
         balance: c.balance,
+        coinType: c.coinType,
+        digest: c.digest,
       })),
       sufficient: estimatedCostMist ? Number(walBalance) >= estimatedCostMist : 'unknown',
+      totalCoinsInWallet: allCoins.data.length,
+      allCoinTypes: [...new Set(allCoins.data.map(c => c.coinType))].slice(0, 5),
     });
     
     if (walBalance === BigInt(0) || walCoins.length === 0) {
@@ -300,14 +330,29 @@ async function signAndExecuteTransaction({
       console.log('[signAndExecuteTransaction] Building transaction with sender:', walletAddress);
       console.log('[signAndExecuteTransaction] Available WAL balance:', {
         balance: walBalance.toString(),
+        balanceFormatted: (Number(walBalance) / 1e9).toFixed(6),
         coinCount: walCoins.length,
-        coins: walCoins.slice(0, 3).map(c => ({ id: c.coinObjectId, balance: c.balance })),
+        coins: walCoins.map(c => ({ 
+          id: c.coinObjectId, 
+          balance: c.balance,
+          balanceFormatted: (Number(c.balance) / 1e9).toFixed(6),
+          coinType: c.coinType,
+        })),
+        requiredWAL: estimatedCostMist?.toString() || 'unknown',
+        requiredWALFormatted: estimatedCostMist ? (Number(estimatedCostMist) / 1e9).toFixed(6) : 'unknown',
       });
+      
+      // Verify coins are accessible one more time right before building
+      if (walCoins.length === 0 && Number(walBalance) > 0) {
+        console.warn('[signAndExecuteTransaction] WARNING: Balance shows WAL tokens but no coin objects found!');
+        console.warn('[signAndExecuteTransaction] This might indicate coins are locked or in a different state.');
+      }
       
       let builtTx: Uint8Array;
       try {
         // Try building with the client - it should automatically select coins
         // The transaction builder queries coins using the sender address
+        // The Walrus SDK's transaction should handle WAL coin selection internally
         builtTx = await transaction.build({ 
           client: suiClient,
           // Ensure the sender is set so coin selection works
