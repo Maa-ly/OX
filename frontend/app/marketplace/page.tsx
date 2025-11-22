@@ -39,7 +39,17 @@ function MarketplaceContent() {
 
   return (
     <div className="min-h-screen bg-[#0a0a0f] text-white">
-      <Header />
+      <Suspense fallback={
+        <nav className="border-b border-zinc-800/50 bg-[#0a0a0f]/80 backdrop-blur-xl sticky top-0 z-50">
+          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+            <div className="flex h-16 items-center justify-between">
+              <div className="h-10 w-10 bg-zinc-800 rounded animate-pulse"></div>
+            </div>
+          </div>
+        </nav>
+      }>
+        <Header />
+      </Suspense>
 
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
         {/* Header */}
@@ -148,7 +158,13 @@ export default function Marketplace() {
   return (
     <Suspense fallback={
       <div className="min-h-screen bg-[#0a0a0f] text-white">
-        <Header />
+        <nav className="border-b border-zinc-800/50 bg-[#0a0a0f]/80 backdrop-blur-xl sticky top-0 z-50">
+          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+            <div className="flex h-16 items-center justify-between">
+              <div className="h-10 w-10 bg-zinc-800 rounded animate-pulse"></div>
+            </div>
+          </div>
+        </nav>
         <div className="flex items-center justify-center py-20">
           <div className="text-center">
             <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-cyan-500 border-r-transparent"></div>
