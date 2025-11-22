@@ -1292,101 +1292,33 @@ export async function storeBlobWithHttpApi(
       throw new Error('Unsupported data type. Expected string, Uint8Array, Blob, or File.');
     }
 
-    // Construct upload URL
+    // Construct upload URL - match the working NFT project implementation exactly
+    // They use epochs=5 and include send_object_to directly
+    // Default to epochs=5 (like the working NFT project)
+    // Shorter epochs may have different payment requirements or be free
     const epochs = options.epochs || 5;
     let uploadUrl = `${WALRUS_PUBLISHER_URL}/v1/blobs?epochs=${epochs}`;
-    
-    console.log('[storeBlobWithHttpApi] Uploading to Walrus HTTP API...', {
+    if (userAddress) {
+      uploadUrl += `&send_object_to=${userAddress}`;
+    }
+
+    console.log('[storeBlobWithHttpApi] Uploading (matching working NFT project approach)...', {
       url: uploadUrl,
-      dataSize: fileData.byteLength,
-      userAddress,
       epochs,
-      note: 'Trying without send_object_to first to avoid coin selection issues',
+      hasOwnership: !!userAddress,
+      dataSize: fileData.byteLength,
     });
 
-    // Try multiple endpoints and configurations with retries
-    // This is a workaround for Walrus backend coin selection issues
-    const publisherEndpoints = [
-      WALRUS_PUBLISHER_URL,
-      WALRUS_PUBLISHER_ALT1,
-      WALRUS_PUBLISHER_ALT2,
-    ];
-    
-    let response: import('axios').AxiosResponse<WalrusUploadResponse>;
-    let lastError: any = null;
-    const maxRetries = 2;
-    
-    // Try each endpoint with retries
-    for (const publisherUrl of publisherEndpoints) {
-      const baseUrl = `${publisherUrl}/v1/blobs?epochs=${epochs}`;
-      
-      // Try without send_object_to first (might avoid coin selection)
-      for (let attempt = 0; attempt < maxRetries; attempt++) {
-        try {
-          if (attempt > 0) {
-            // Add delay between retries
-            await new Promise(resolve => setTimeout(resolve, 2000 * attempt));
-          }
-          
-          console.log(`[storeBlobWithHttpApi] Attempt ${attempt + 1} on ${publisherUrl} (without ownership)...`);
-          response = await axios.put<WalrusUploadResponse>(
-            baseUrl,
-            fileData,
-            {
-              headers: {
-                'Content-Type': 'application/octet-stream',
-              },
-              timeout: 60000,
-            }
-          );
-          console.log('[storeBlobWithHttpApi] Upload successful without ownership');
-          break; // Success, exit retry loop
-        } catch (error: any) {
-          lastError = error;
-          const errorMsg = error.response?.data?.error?.message || error.message;
-          console.warn(`[storeBlobWithHttpApi] Attempt ${attempt + 1} failed:`, errorMsg);
-          
-          // If it's not a coin selection error, don't retry
-          if (!errorMsg?.includes('WAL coins') && !errorMsg?.includes('sufficient balance')) {
-            throw error;
-          }
-        }
+    const response = await axios.put<WalrusUploadResponse>(
+      uploadUrl,
+      fileData,
+      {
+        headers: {
+          'Content-Type': 'application/octet-stream',
+        },
+        timeout: 60000, // 60 seconds
       }
-      
-      // If successful, break out of endpoint loop
-      if (response!) {
-        break;
-      }
-      
-      // If we have userAddress, try with ownership on this endpoint
-      if (userAddress) {
-        const urlWithOwnership = `${baseUrl}&send_object_to=${userAddress}`;
-        try {
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          console.log(`[storeBlobWithHttpApi] Trying ${publisherUrl} with ownership...`);
-          response = await axios.put<WalrusUploadResponse>(
-            urlWithOwnership,
-            fileData,
-            {
-              headers: {
-                'Content-Type': 'application/octet-stream',
-              },
-              timeout: 60000,
-            }
-          );
-          console.log('[storeBlobWithHttpApi] Upload successful with ownership');
-          break; // Success, exit endpoint loop
-        } catch (error: any) {
-          lastError = error;
-          console.warn(`[storeBlobWithHttpApi] Upload with ownership failed on ${publisherUrl}:`, error.response?.data?.error?.message || error.message);
-        }
-      }
-    }
-    
-    // If all attempts failed, throw the last error
-    if (!response!) {
-      throw lastError;
-    }
+    );
 
     // Extract blob ID from response
     const blobId = response.data.newlyCreated?.blobObject.blobId || 

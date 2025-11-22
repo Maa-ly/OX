@@ -296,41 +296,43 @@ function DiscoverPageContent() {
 
       // First, handle media file if present
       if (mediaFile) {
-        console.log('[handleSubmitPost] Uploading media via HTTP API...');
-        const mediaResult = await storeBlobWithHttpApi(mediaFile, currentAddress, {
-          epochs: 365,
-        });
-        mediaBlobId = mediaResult.blobId;
-        console.log('[handleSubmitPost] Media uploaded:', mediaBlobId);
-      }
-
-      // Create post object
-      const postData = {
-        content: newPost,
-        mediaType: mediaType,
-        mediaBlobId: mediaBlobId, // Include media blob ID if present
-        ipTokenIds: selectedIPTokens,
-        author: currentAddress.slice(0, 6) + "..." + currentAddress.slice(-4),
-        authorAddress: currentAddress,
-        timestamp: Date.now(),
-        tags: [],
-      };
-
-      // Upload post data via HTTP API
-      const postDataJson = JSON.stringify({
-        post_type: 'discover_post',
-        engagement_type: 'post',
-        ...postData,
-        likes: 0,
-        comments: 0,
-        likesList: [],
-        commentsList: [],
+      console.log('[handleSubmitPost] Uploading media via HTTP API...');
+      // Use epochs=5 like the working NFT project - shorter epochs may have different payment requirements
+      const mediaResult = await storeBlobWithHttpApi(mediaFile, currentAddress, {
+        epochs: 5, // Changed from 365 to match working implementation
       });
+      mediaBlobId = mediaResult.blobId;
+      console.log('[handleSubmitPost] Media uploaded:', mediaBlobId);
+    }
 
-      console.log('[handleSubmitPost] Uploading post data via HTTP API...');
-      const postResult = await storeBlobWithHttpApi(postDataJson, currentAddress, {
-        epochs: 365,
-      });
+    // Create post object
+    const postData = {
+      content: newPost,
+      mediaType: mediaType,
+      mediaBlobId: mediaBlobId, // Include media blob ID if present
+      ipTokenIds: selectedIPTokens,
+      author: currentAddress.slice(0, 6) + "..." + currentAddress.slice(-4),
+      authorAddress: currentAddress,
+      timestamp: Date.now(),
+      tags: [],
+    };
+
+    // Upload post data via HTTP API
+    const postDataJson = JSON.stringify({
+      post_type: 'discover_post',
+      engagement_type: 'post',
+      ...postData,
+      likes: 0,
+      comments: 0,
+      likesList: [],
+      commentsList: [],
+    });
+
+    console.log('[handleSubmitPost] Uploading post data via HTTP API...');
+    // Use epochs=5 like the working NFT project - shorter epochs may have different payment requirements
+    const postResult = await storeBlobWithHttpApi(postDataJson, currentAddress, {
+      epochs: 5, // Changed from 365 to match working implementation
+    });
       console.log('[handleSubmitPost] Post uploaded:', postResult.blobId);
 
       // HTTP API handles registration automatically, so we're done!
