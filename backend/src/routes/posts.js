@@ -168,9 +168,9 @@ router.post('/', async (req, res, next) => {
  */
 router.get('/', async (req, res, next) => {
   try {
-    const { ipTokenId, mediaType, userAddress, limit = 50, offset = 0 } = req.query;
+    const { ipTokenId, mediaType, userAddress, limit = 1000, offset = 0 } = req.query; // Increased limit to get all posts
 
-    logger.info('Fetching posts', { ipTokenId, mediaType, userAddress, limit, offset });
+    logger.info('Fetching all posts', { ipTokenId, mediaType, userAddress, limit, offset });
 
     // Query Walrus directly (like we do for tokens) - no index needed!
     // This ensures posts persist across server restarts
@@ -178,6 +178,8 @@ router.get('/', async (req, res, next) => {
       userAddress,
       ipTokenId,
     });
+    
+    logger.info(`Found ${allPosts.length} total posts from Walrus`);
 
     // If userAddress is provided, filter to show only that user's posts
     // Otherwise, show ALL posts (everyone can see everyone's posts)

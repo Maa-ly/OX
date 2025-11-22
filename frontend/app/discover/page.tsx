@@ -105,6 +105,7 @@ function DiscoverPageContent() {
       
       const result = await getPosts({
         mediaType: mediaType,
+        limit: 1000, // Get all posts
       });
       setPosts(result.posts.map(post => ({
         ...post,

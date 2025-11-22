@@ -1270,10 +1270,10 @@ export class WalrusService {
    * This queries Sui for blob objects, then reads blob IDs from them
    * Then we read the actual content from Walrus aggregator
    * 
-   * @param {number} limit - Maximum number of objects to query (default: 100)
+   * @param {number} limit - Maximum number of objects to query (default: 1000)
    * @returns {Promise<Array<string>>} Array of blob IDs
    */
-  async queryAllBlobIdsFromSui(limit = 100) {
+  async queryAllBlobIdsFromSui(limit = 1000) {
     try {
       logger.info('Querying Sui for blob objects...');
       
@@ -1374,14 +1374,48 @@ export class WalrusService {
         const userPosts = await this.getContributionsByOwner(userAddress);
         allPosts = userPosts;
       } else {
-        // PRIMARY METHOD: Query Sui events directly (no backend dependency)
-        logger.info('Querying Sui events for all blob IDs...');
-        const blobIds = await this.queryAllBlobIdsFromSui(100);
+        // COMBINE BOTH METHODS: Use indexer for immediate posts + Sui for discovery
+        // This ensures recently indexed posts appear immediately, while Sui discovers older posts
         
-        logger.info(`Found ${blobIds.length} blob IDs from Sui events`);
+        // Method 1: Check in-memory indexer first (for recently indexed posts)
+        let indexedBlobIds = new Set();
+        try {
+          const { WalrusIndexerService } = await import('./walrus-indexer.js');
+          const indexerService = new WalrusIndexerService();
+          const indexedPosts = await indexerService.queryContributionsByIP('all', {});
+          
+          if (indexedPosts && indexedPosts.length > 0) {
+            logger.info(`Found ${indexedPosts.length} posts from in-memory index`);
+            // Add indexed posts directly
+            for (const post of indexedPosts) {
+              const blobId = post.blobId || post.id;
+              if (blobId) {
+                indexedBlobIds.add(blobId);
+                allPosts.push({
+                  id: blobId,
+                  blobId,
+                  ...post,
+                });
+              }
+            }
+          }
+        } catch (indexerError) {
+          logger.debug('In-memory indexer not available:', indexerError.message);
+        }
+        
+        // Method 2: Query Sui events to discover additional posts (not in indexer)
+        logger.info('Querying Sui events for additional blob IDs...');
+        const suiBlobIds = await this.queryAllBlobIdsFromSui(1000); // Increased limit to get more posts
+        
+        logger.info(`Found ${suiBlobIds.length} blob IDs from Sui events`);
 
-        // Read each blob to get post data
-        for (const blobId of blobIds) {
+        // Read each blob from Sui that's not already in our list
+        for (const blobId of suiBlobIds) {
+          // Skip if already added from indexer
+          if (indexedBlobIds.has(blobId)) {
+            continue;
+          }
+          
           try {
             const contribution = await this.readContribution(blobId);
             if (contribution && (contribution.post_type === 'discover_post' || contribution.engagement_type === 'post')) {
@@ -1394,28 +1428,6 @@ export class WalrusService {
           } catch (error) {
             // Blob might not be certified yet or might not be a post
             logger.debug(`Could not read blob ${blobId}:`, error.message);
-          }
-        }
-
-        // FALLBACK: If Sui query returned no results, try in-memory indexer
-        if (allPosts.length === 0) {
-          logger.info('No posts from Sui events, trying in-memory indexer as fallback...');
-          try {
-            const { WalrusIndexerService } = await import('./walrus-indexer.js');
-            const indexerService = new WalrusIndexerService();
-            
-            const indexedPosts = await indexerService.queryContributionsByIP('all', {});
-            
-            if (indexedPosts && indexedPosts.length > 0) {
-              logger.info(`Found ${indexedPosts.length} posts from in-memory index (fallback)`);
-              allPosts = indexedPosts.map(post => ({
-                id: post.blobId || post.id,
-                blobId: post.blobId || post.id,
-                ...post,
-              }));
-            }
-          } catch (indexerError) {
-            logger.debug('In-memory indexer also empty:', indexerError.message);
           }
         }
       }
