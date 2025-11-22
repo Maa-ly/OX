@@ -255,20 +255,59 @@ function DiscoverPageContent() {
     const postResult = await storeBlobWithHttpApi(postDataJson, currentAddress, {
       epochs: 5, // Changed from 365 to match working implementation
     });
-      console.log('[handleSubmitPost] Post uploaded:', postResult.blobId);
+    console.log('[handleSubmitPost] Post uploaded:', postResult.blobId);
 
-      // HTTP API handles registration automatically, so we're done!
-      setSuccessModal({ 
-        open: true, 
-        message: "Post uploaded successfully! The post will be available shortly after certification." 
+    // Index the post on backend so it can be fetched
+    const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+    try {
+      console.log('[handleSubmitPost] Indexing post on backend...');
+      const indexResponse = await fetch(`${API_BASE_URL}/api/posts/index`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          blobId: postResult.blobId,
+          post: {
+            post_type: 'discover_post',
+            engagement_type: 'post',
+            ...postData,
+            likes: 0,
+            comments: 0,
+            likesList: [],
+            commentsList: [],
+          },
+        }),
       });
-      
-      // Reset form
-      setNewPost('');
-      setMediaFile(null);
-      setMediaPreview(null);
-      setMediaType('text');
-      setSelectedIPTokens([]);
+
+      if (!indexResponse.ok) {
+        const error = await indexResponse.json().catch(() => ({ error: 'Unknown error' }));
+        console.warn('[handleSubmitPost] Backend indexing failed:', error);
+        // Don't throw - post was uploaded successfully, just indexing failed
+      } else {
+        console.log('[handleSubmitPost] Post indexed successfully');
+      }
+    } catch (indexError) {
+      console.warn('[handleSubmitPost] Error indexing post:', indexError);
+      // Don't throw - post was uploaded successfully
+    }
+
+    // Reload posts to show the new post
+    await loadPosts();
+
+    // HTTP API handles registration automatically, so we're done!
+    setSuccessModal({ 
+      open: true, 
+      message: "Post uploaded successfully!" 
+    });
+    
+    // Reset form
+    setNewPost('');
+    setMediaFile(null);
+    setMediaPreview(null);
+    setMediaType('text');
+    setSelectedIPTokens([]);
+    setShowCreatePost(false);
     } catch (error: any) {
       console.error("Failed to prepare post:", error);
       setErrorModal({ 

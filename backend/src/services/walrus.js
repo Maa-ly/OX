@@ -1097,4 +1097,116 @@ export class WalrusService {
   async getContribution(cid) {
     return this.readContribution(cid);
   }
+
+  /**
+   * Query blob objects owned by a user address
+   * 
+   * Queries Sui for blob objects owned by the given address.
+   * Walrus stores blob objects on Sui, so we can query them directly.
+   * 
+   * Note: When using HTTP API with send_object_to, the blob object is owned by the user.
+   * We can query these objects directly from Sui.
+   * 
+   * @param {string} ownerAddress - User's Sui address
+   * @returns {Promise<Array>} Array of blob IDs owned by the user
+   */
+  async queryBlobsByOwner(ownerAddress) {
+    try {
+      logger.info(`Querying blob objects for owner: ${ownerAddress}`);
+
+      // Query all objects owned by the address
+      // We'll fetch all objects and filter for blob objects
+      const allObjects = await this.suiClient.getOwnedObjects({
+        owner: ownerAddress,
+        options: {
+          showType: true,
+          showContent: true, // Need content to extract blobId
+        },
+        limit: 1000, // Maximum limit
+      });
+
+      // Filter for blob objects and extract blob IDs
+      // Walrus blob objects have type like: 0x...::walrus::BlobObject
+      // The blobId is stored in the object content
+      const blobIds = [];
+      for (const obj of allObjects.data) {
+        try {
+          const objType = obj.data?.type || '';
+          // Check if it's a Walrus blob object
+          if (objType.includes('walrus') && (objType.includes('BlobObject') || objType.includes('Blob'))) {
+            // Try to extract blobId from object content
+            if (obj.data?.content && typeof obj.data.content === 'object') {
+              const content = obj.data.content;
+              // BlobId might be in different fields depending on object structure
+              const blobId = content.fields?.blobId || 
+                           content.blobId || 
+                           content.fields?.id ||
+                           obj.data.objectId; // Fallback to object ID
+              
+              if (blobId) {
+                blobIds.push(blobId);
+              }
+            } else {
+              // If we can't extract blobId, use objectId as fallback
+              blobIds.push(obj.data.objectId);
+            }
+          }
+        } catch (err) {
+          logger.warn(`Error processing object ${obj.data?.objectId}:`, err.message);
+        }
+      }
+
+      logger.info(`Found ${blobIds.length} blob objects for owner ${ownerAddress}`);
+      return blobIds;
+    } catch (error) {
+      logger.error(`Error querying blobs for owner ${ownerAddress}:`, error);
+      throw new Error(`Failed to query blobs by owner: ${error.message}`);
+    }
+  }
+
+  /**
+   * Get all contributions (posts) owned by a user address
+   * 
+   * Queries blob objects owned by the user and reads their content
+   * to get the actual post data.
+   * 
+   * @param {string} ownerAddress - User's Sui address
+   * @returns {Promise<Array>} Array of contribution objects
+   */
+  async getContributionsByOwner(ownerAddress) {
+    try {
+      logger.info(`Getting contributions for owner: ${ownerAddress}`);
+
+      // Get blob IDs owned by the user
+      const blobIds = await this.queryBlobsByOwner(ownerAddress);
+
+      // Read each blob to get the contribution data
+      const contributions = [];
+      for (const blobId of blobIds) {
+        try {
+          const contribution = await this.readContribution(blobId);
+          // Only include posts
+          if (contribution.post_type === 'discover_post' || contribution.engagement_type === 'post') {
+            contributions.push({
+              id: blobId,
+              blobId,
+              ...contribution,
+            });
+          }
+        } catch (error) {
+          logger.warn(`Failed to read contribution ${blobId}:`, error.message);
+          // Continue with other blobs
+        }
+      }
+
+      // Sort by timestamp (newest first)
+      contributions.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+      logger.info(`Found ${contributions.length} posts for owner ${ownerAddress}`);
+      return contributions;
+    } catch (error) {
+      logger.error(`Error getting contributions for owner ${ownerAddress}:`, error);
+      throw new Error(`Failed to get contributions by owner: ${error.message}`);
+    }
+  }
 }

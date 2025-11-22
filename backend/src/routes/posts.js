@@ -125,55 +125,88 @@ router.post('/', async (req, res, next) => {
  * Query parameters:
  * - ipTokenId: Filter by IP token ID
  * - mediaType: Filter by media type (image, video, text)
+ * - userAddress: Filter by user address (owner of the blob)
  * - limit: Limit number of results
  * - offset: Offset for pagination
  */
 router.get('/', async (req, res, next) => {
   try {
-    const { ipTokenId, mediaType, limit = 50, offset = 0 } = req.query;
+    const { ipTokenId, mediaType, userAddress, limit = 50, offset = 0 } = req.query;
 
-    logger.info('Fetching posts', { ipTokenId, mediaType, limit, offset });
+    logger.info('Fetching posts', { ipTokenId, mediaType, userAddress, limit, offset });
 
     let allPosts = [];
 
-    if (ipTokenId) {
-      // Get posts for specific IP token
-      const contributions = await indexerService.queryContributionsByIP(ipTokenId, {
-        type: 'post',
-      });
+    // If userAddress is provided, try to fetch posts directly from Walrus by owner
+    // But also fall back to index-based query since indexing is more reliable
+    if (userAddress) {
+      try {
+        const userPosts = await walrusService.getContributionsByOwner(userAddress);
+        if (userPosts.length > 0) {
+          allPosts = userPosts;
+          
+          // Apply IP token filter if specified
+          if (ipTokenId) {
+            allPosts = allPosts.filter(post => 
+              post.ipTokenIds && Array.isArray(post.ipTokenIds) && post.ipTokenIds.includes(ipTokenId)
+            );
+          }
+        }
+      } catch (error) {
+        logger.warn(`Error fetching posts for user ${userAddress} (will use index):`, error.message);
+        // Fall through to index-based query
+      }
+    }
 
-      allPosts = contributions
-        .filter((c) => c.post_type === 'discover_post' || c.engagement_type === 'post')
-        .map((c) => ({
-          id: c.walrus_cid || c.walrus_blob_id || c.id,
-          blobId: c.walrus_cid || c.walrus_blob_id || c.id,
-          ...c,
-        }));
-    } else {
-      // Get all posts from all tokens
-      // First, get all token IDs from contract
-      const { contractService } = await import('../services/contract.js');
-      const tokenIds = await contractService.getAllTokens();
+    // Use index-based query (more reliable - uses indexed posts)
+    // This works even if direct owner query fails
+    if (allPosts.length === 0) {
+      if (ipTokenId) {
+        // Get posts for specific IP token
+        const contributions = await indexerService.queryContributionsByIP(ipTokenId, {
+          type: 'post',
+        });
 
-      for (const tokenId of tokenIds) {
-        try {
-          const contributions = await indexerService.queryContributionsByIP(tokenId, {
-            type: 'post',
-          });
+        allPosts = contributions
+          .filter((c) => c.post_type === 'discover_post' || c.engagement_type === 'post')
+          .map((c) => ({
+            id: c.walrus_cid || c.walrus_blob_id || c.id,
+            blobId: c.walrus_cid || c.walrus_blob_id || c.id,
+            ...c,
+          }));
+      } else {
+        // Get all posts from all tokens
+        // First, get all token IDs from contract
+        const { contractService } = await import('../services/contract.js');
+        const tokenIds = await contractService.getAllTokens();
 
-          const posts = contributions
-            .filter((c) => c.post_type === 'discover_post' || c.engagement_type === 'post')
-            .map((c) => ({
-              id: c.walrus_cid || c.walrus_blob_id || c.id,
-              blobId: c.walrus_cid || c.walrus_blob_id || c.id,
-              ...c,
-            }));
+        for (const tokenId of tokenIds) {
+          try {
+            const contributions = await indexerService.queryContributionsByIP(tokenId, {
+              type: 'post',
+            });
 
-          allPosts.push(...posts);
-        } catch (error) {
-          logger.warn(`Failed to fetch posts for token ${tokenId}:`, error.message);
+            const posts = contributions
+              .filter((c) => c.post_type === 'discover_post' || c.engagement_type === 'post')
+              .map((c) => ({
+                id: c.walrus_cid || c.walrus_blob_id || c.id,
+                blobId: c.walrus_cid || c.walrus_blob_id || c.id,
+                ...c,
+              }));
+
+            allPosts.push(...posts);
+          } catch (error) {
+            logger.warn(`Failed to fetch posts for token ${tokenId}:`, error.message);
+          }
         }
       }
+    }
+
+    // If userAddress was provided and we have posts, filter by author
+    if (userAddress && allPosts.length > 0) {
+      allPosts = allPosts.filter(post => 
+        post.authorAddress === userAddress || post.author === userAddress
+      );
     }
 
     // Filter by media type if specified
