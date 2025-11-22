@@ -11,7 +11,6 @@ import { useWalletAuth } from "@/lib/hooks/useWalletAuth";
 import { useZkLogin } from "@/lib/hooks/useZkLogin";
 import { useAuthStore } from "@/lib/stores/auth-store";
 import { ErrorModal, SuccessModal } from "@/components/shared/modal";
-import { checkWALBalance, estimateWalrusCost, checkSufficientBalance, type BalanceInfo } from "@/lib/utils/wal-balance";
 import { splitWALCoins } from "@/lib/utils/walrus-sdk";
 
 const NavWalletButton = dynamic(
@@ -67,11 +66,6 @@ function DiscoverPageContent() {
     open: boolean; 
     message: string; 
     details?: string;
-    balanceInfo?: {
-      current: string;
-      required: string;
-      shortfall: string;
-    };
   }>({
     open: false,
     message: '',
@@ -81,11 +75,8 @@ function DiscoverPageContent() {
     message: '',
   });
   
-  // Balance state
-  const [walBalance, setWalBalance] = useState<BalanceInfo | null>(null);
+  // Split coins state
   const [splittingCoins, setSplittingCoins] = useState(false);
-  const [loadingBalance, setLoadingBalance] = useState(false);
-  const [estimatedCost, setEstimatedCost] = useState<{ costMist: number; costWAL: string } | null>(null);
 
   // Load IP tokens and posts
   useEffect(() => {
@@ -93,15 +84,6 @@ function DiscoverPageContent() {
     loadPosts();
   }, []);
 
-  // Load WAL balance when wallet is connected
-  useEffect(() => {
-    if (currentAddress && wallet?.connected) {
-      loadWALBalance();
-    } else {
-      setWalBalance(null);
-      setEstimatedCost(null);
-    }
-  }, [currentAddress, wallet?.connected]);
 
   // Real-time updates: Poll for new posts every 30 seconds
   useEffect(() => {
@@ -150,28 +132,6 @@ function DiscoverPageContent() {
     }
   };
 
-  const loadWALBalance = async () => {
-    if (!currentAddress) return;
-    
-    setLoadingBalance(true);
-    try {
-      const balance = await checkWALBalance(currentAddress, 'testnet');
-      setWalBalance(balance);
-      
-      // Estimate cost for post (rough estimate based on content length)
-      const postSize = newPost.length + (mediaFile ? mediaFile.size : 0);
-      const cost = estimateWalrusCost(postSize, 365);
-      setEstimatedCost({
-        costMist: cost.estimatedCostMist,
-        costWAL: cost.estimatedCostWAL,
-      });
-    } catch (error) {
-      console.error("Failed to load WAL balance:", error);
-      // Don't show error to user, just log it
-    } finally {
-      setLoadingBalance(false);
-    }
-  };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -183,15 +143,6 @@ function DiscoverPageContent() {
       const reader = new FileReader();
       reader.onloadend = () => {
         setMediaPreview(reader.result as string);
-        // Recalculate cost when media is added
-        if (currentAddress && wallet?.connected) {
-          const postSize = newPost.length + file.size;
-          const cost = estimateWalrusCost(postSize, 365);
-          setEstimatedCost({
-            costMist: cost.estimatedCostMist,
-            costWAL: cost.estimatedCostWAL,
-          });
-        }
       };
       reader.readAsDataURL(file);
     } else if (file.type.startsWith("video/")) {
@@ -200,15 +151,6 @@ function DiscoverPageContent() {
       const reader = new FileReader();
       reader.onloadend = () => {
         setMediaPreview(reader.result as string);
-        // Recalculate cost when media is added
-        if (currentAddress && wallet?.connected) {
-          const postSize = newPost.length + file.size;
-          const cost = estimateWalrusCost(postSize, 365);
-          setEstimatedCost({
-            costMist: cost.estimatedCostMist,
-            costWAL: cost.estimatedCostWAL,
-          });
-        }
       };
       reader.readAsDataURL(file);
     } else {
@@ -265,26 +207,6 @@ function DiscoverPageContent() {
       console.warn('[handleSubmitPost] Wallet-kit not connected but store has connection. Proceeding - transaction may fail if wallet not ready.');
     }
 
-    // Check balance before proceeding
-    try {
-      await loadWALBalance();
-      
-      if (walBalance && estimatedCost) {
-        const sufficient = checkSufficientBalance(walBalance, estimatedCost.costMist);
-        
-        if (!sufficient.sufficient) {
-          setErrorModal({
-            open: true,
-            message: 'Insufficient WAL Tokens',
-            details: `You need ${estimatedCost.costWAL} to store this post, but you only have ${walBalance.walBalanceFormatted}. You need ${sufficient.shortfallFormatted} more.`,
-          });
-          return;
-        }
-      }
-    } catch (balanceError) {
-      console.error('Error checking balance:', balanceError);
-      // Continue anyway - the transaction will fail with a better error message
-    }
 
     setSubmitting(true);
     try {
@@ -394,26 +316,10 @@ function DiscoverPageContent() {
       console.error("Failed to register:", error);
       const errorMessage = error?.message || "Unknown error";
       
-      // Check if it's a balance error and extract details
-      const isBalanceError = errorMessage.toLowerCase().includes('insufficient') || 
-                            errorMessage.toLowerCase().includes('not enough coins') ||
-                            errorMessage.toLowerCase().includes('wal');
-      
-      let balanceInfo = undefined;
-      if (isBalanceError && walBalance && estimatedCost) {
-        const sufficient = checkSufficientBalance(walBalance, estimatedCost.costMist);
-        balanceInfo = {
-          current: walBalance.walBalanceFormatted,
-          required: estimatedCost.costWAL,
-          shortfall: sufficient.shortfallFormatted,
-        };
-      }
-      
       setErrorModal({ 
         open: true, 
         message: errorMessage,
         details: `Failed to register: ${errorMessage}`,
-        balanceInfo,
       });
     } finally {
       if (isMedia) {
@@ -466,26 +372,10 @@ function DiscoverPageContent() {
       console.error("Failed to certify:", error);
       const errorMessage = error?.message || "Unknown error";
       
-      // Check if it's a balance error and extract details
-      const isBalanceError = errorMessage.toLowerCase().includes('insufficient') || 
-                            errorMessage.toLowerCase().includes('not enough coins') ||
-                            errorMessage.toLowerCase().includes('wal');
-      
-      let balanceInfo = undefined;
-      if (isBalanceError && walBalance && estimatedCost) {
-        const sufficient = checkSufficientBalance(walBalance, estimatedCost.costMist);
-        balanceInfo = {
-          current: walBalance.walBalanceFormatted,
-          required: estimatedCost.costWAL,
-          shortfall: sufficient.shortfallFormatted,
-        };
-      }
-      
       setErrorModal({ 
         open: true, 
         message: errorMessage,
         details: `Failed to certify: ${errorMessage}`,
-        balanceInfo,
       });
     } finally {
       if (isMedia) {
@@ -814,78 +704,44 @@ function DiscoverPageContent() {
               )}
             </div>
 
-            {/* WAL Balance Display */}
-            {walBalance && (
+            {/* Split Coins Button */}
+            {wallet && wallet.connected && (
               <div className="mb-4 p-3 bg-zinc-800/50 border border-zinc-700 rounded-lg">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-zinc-400">WAL Balance</p>
-                    <p className="text-lg font-semibold text-white">
-                      {loadingBalance ? 'Loading...' : walBalance.walBalanceFormatted}
-                    </p>
-                  </div>
-                  {estimatedCost && (
-                    <div className="text-right">
-                      <p className="text-sm text-zinc-400">Estimated Cost</p>
-                      <p className={`text-lg font-semibold ${
-                        walBalance.walBalance >= estimatedCost.costMist 
-                          ? 'text-green-400' 
-                          : 'text-red-400'
-                      }`}>
-                        {estimatedCost.costWAL}
-                      </p>
-                    </div>
-                  )}
-                </div>
-                {estimatedCost && walBalance.walBalance < estimatedCost.costMist && (
-                  <div className="mt-2 p-2 bg-red-500/10 border border-red-500/20 rounded text-sm text-red-300">
-                    ⚠️ Insufficient balance. You need {estimatedCost.costWAL} but only have {walBalance.walBalanceFormatted}
-                  </div>
-                )}
-                {/* Split Coins Button */}
-                {wallet && wallet.connected && (
-                  <div className="mt-3 border-t border-zinc-700 pt-3">
-                    <button
-                      onClick={async () => {
-                        if (!wallet || !wallet.connected) {
-                          setErrorModal({ open: true, message: 'Please connect your wallet first' });
-                          return;
-                        }
-                        setSplittingCoins(true);
-                        try {
-                          const result = await splitWALCoins(wallet, {
-                            network: 'testnet',
-                            numSplits: 3,
-                            splitAmount: 0.1, // Split into 3 coins of 0.1 WAL each
-                          });
-                          setSuccessModal({ 
-                            open: true, 
-                            message: `${result.message}\nTransaction: ${result.digest.slice(0, 10)}...`
-                          });
-                          // Reload balance after splitting
-                          setTimeout(() => {
-                            loadWALBalance();
-                          }, 2000);
-                        } catch (error: any) {
-                          setErrorModal({ 
-                            open: true, 
-                            message: 'Failed to split coins',
-                            details: error?.message || 'Unknown error occurred'
-                          });
-                        } finally {
-                          setSplittingCoins(false);
-                        }
-                      }}
-                      disabled={splittingCoins}
-                      className="w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {splittingCoins ? 'Splitting Coins...' : 'Split WAL Coins (Helps with Walrus uploads)'}
-                    </button>
-                    <p className="mt-1 text-xs text-zinc-500">
-                      Splits your WAL coins into smaller amounts to help Walrus find them
-                    </p>
-                  </div>
-                )}
+                <button
+                  onClick={async () => {
+                    if (!wallet || !wallet.connected) {
+                      setErrorModal({ open: true, message: 'Please connect your wallet first' });
+                      return;
+                    }
+                    setSplittingCoins(true);
+                    try {
+                      const result = await splitWALCoins(wallet, {
+                        network: 'testnet',
+                        numSplits: 3,
+                        splitAmount: 0.1, // Split into 3 coins of 0.1 WAL each
+                      });
+                      setSuccessModal({ 
+                        open: true, 
+                        message: `${result.message}\nTransaction: ${result.digest.slice(0, 10)}...`
+                      });
+                    } catch (error: any) {
+                      setErrorModal({ 
+                        open: true, 
+                        message: 'Failed to split coins',
+                        details: error?.message || 'Unknown error occurred'
+                      });
+                    } finally {
+                      setSplittingCoins(false);
+                    }
+                  }}
+                  disabled={splittingCoins}
+                  className="w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {splittingCoins ? 'Splitting Coins...' : 'Split WAL Coins (Helps with Walrus uploads)'}
+                </button>
+                <p className="mt-1 text-xs text-zinc-500">
+                  Splits your WAL coins into smaller amounts to help Walrus find them
+                </p>
               </div>
             )}
 
@@ -894,15 +750,6 @@ function DiscoverPageContent() {
               value={newPost}
               onChange={(e) => {
                 setNewPost(e.target.value);
-                // Recalculate cost when content changes
-                if (currentAddress && wallet?.connected) {
-                  const postSize = e.target.value.length + (mediaFile ? mediaFile.size : 0);
-                  const cost = estimateWalrusCost(postSize, 365);
-                  setEstimatedCost({
-                    costMist: cost.estimatedCostMist,
-                    costWAL: cost.estimatedCostWAL,
-                  });
-                }
               }}
               placeholder="Share your thoughts, memes, or content..."
               className="w-full bg-zinc-950 border border-zinc-700 rounded-lg p-4 min-h-32 focus:outline-none focus:border-cyan-500 resize-none"
@@ -1304,7 +1151,6 @@ function DiscoverPageContent() {
         onClose={() => setErrorModal({ open: false, message: '' })}
         message={errorModal.message}
         details={errorModal.details}
-        balanceInfo={errorModal.balanceInfo}
       />
 
       {/* Success Modal */}
