@@ -40,15 +40,22 @@ export class WalrusIndexerService {
     const blobIds = this.index.get(ipTokenId);
     if (!blobIds.includes(blobId)) {
       blobIds.push(blobId);
-      this.blobCache.set(blobId, {
-        ipTokenId,
-        blobId,
-        ...metadata,
-        indexedAt: Date.now(),
-      });
+      logger.info(`Adding blob ${blobId} to index for token ${ipTokenId}`);
     }
+    
+    // Always update cache with latest metadata (even if already indexed)
+    this.blobCache.set(blobId, {
+      ipTokenId,
+      blobId,
+      id: blobId,
+      ...metadata,
+      indexedAt: Date.now(),
+    });
 
-    logger.debug(`Indexed contribution: ${ipTokenId} -> ${blobId}`);
+    logger.info(`Indexed contribution: ${ipTokenId} -> ${blobId}`, {
+      hasMetadata: !!metadata,
+      metadataKeys: Object.keys(metadata),
+    });
   }
 
   /**
@@ -64,6 +71,13 @@ export class WalrusIndexerService {
 
       // Get blob IDs from index
       const blobIds = this.index.get(ipTokenId) || [];
+      
+      // Debug: Log all IP tokens in index
+      logger.info(`Index state: ${this.index.size} IP tokens indexed`, {
+        ipTokenIds: Array.from(this.index.keys()),
+        blobIdsForThisToken: blobIds.length,
+        totalCachedBlobs: this.blobCache.size,
+      });
 
       logger.debug(`Index has ${blobIds.length} blob IDs for token ${ipTokenId}`);
 
@@ -85,22 +99,46 @@ export class WalrusIndexerService {
       }
 
       // Read contributions from Walrus
+      // Use cached metadata if available, fallback to reading from Walrus
       const contributions = [];
       for (const blobId of filteredBlobIds) {
         try {
+          // First try to use cached metadata (faster and works even if blob not certified yet)
+          const cached = this.blobCache.get(blobId);
+          if (cached) {
+            logger.debug(`Using cached metadata for blob ${blobId}`);
+            contributions.push({
+              blobId,
+              id: blobId,
+              ...cached,
+            });
+            continue;
+          }
+          
+          // If no cache, try reading from Walrus
           const contribution = await this.walrusService.readContribution(blobId);
-          contributions.push(contribution);
+          contributions.push({
+            blobId,
+            id: blobId,
+            ...contribution,
+          });
         } catch (error) {
           logger.warn(`Failed to read contribution ${blobId}:`, error.message);
-          // Remove from index if blob no longer exists
-          const blobIds = this.index.get(ipTokenId);
-          if (blobIds) {
-            const index = blobIds.indexOf(blobId);
-            if (index > -1) {
-              blobIds.splice(index, 1);
-            }
+          
+          // Use cached metadata as fallback if available
+          const cached = this.blobCache.get(blobId);
+          if (cached) {
+            logger.info(`Using cached metadata as fallback for blob ${blobId}`);
+            contributions.push({
+              blobId,
+              id: blobId,
+              ...cached,
+            });
+          } else {
+            // Only remove from index if we have no cache AND read failed
+            // (blob might not be certified yet, so keep it in index)
+            logger.debug(`No cache available for ${blobId}, keeping in index (might not be certified yet)`);
           }
-          this.blobCache.delete(blobId);
         }
       }
 
@@ -215,9 +253,9 @@ export class WalrusIndexerService {
 
 // Export singleton instance to avoid creating multiple instances
 // This ensures all parts of the app use the same in-memory index
-let indexerServiceInstance: WalrusIndexerService | null = null;
+let indexerServiceInstance = null;
 
-export function getIndexerService(): WalrusIndexerService {
+export function getIndexerService() {
   if (!indexerServiceInstance) {
     indexerServiceInstance = new WalrusIndexerService();
   }

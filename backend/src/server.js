@@ -20,9 +20,11 @@ import postsRoutes from './routes/posts.js';
 // Import services
 import { OracleScheduler } from './services/scheduler.js';
 import { MetricsCollectorService } from './services/metrics-collector.js';
+import { mongoDBService } from './services/mongodb.js';
 
 const app = express();
-const DEFAULT_PORT = parseInt(process.env.PORT || '3000', 10);
+// Default to port 3001 to avoid conflict with Next.js frontend (port 3000)
+const DEFAULT_PORT = parseInt(process.env.PORT || '3001', 10);
 
 // Middleware
 app.use(helmet());
@@ -99,6 +101,18 @@ let metricsCollector = null;
 async function startServer() {
   try {
     logger.info('Starting ODX Oracle Service...');
+    
+    // Connect to MongoDB if MONGODB_URI is set
+    if (process.env.MONGODB_URI || process.env.MONGO_URL) {
+      try {
+        await mongoDBService.connect();
+        logger.info('MongoDB connected for blob storage');
+      } catch (error) {
+        logger.warn('MongoDB connection failed, will use file-based storage:', error.message);
+      }
+    } else {
+      logger.info('MONGODB_URI not set, using file-based blob storage');
+    }
     
     const PORT = await findAvailablePort(DEFAULT_PORT);
     

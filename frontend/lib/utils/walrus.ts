@@ -6,7 +6,8 @@
  * Reference: https://docs.wal.app/usage/client-cli
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+// Backend runs on port 3001 to avoid conflict with Next.js frontend (port 3000)
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
 /**
  * Response types for Walrus operations
@@ -567,6 +568,143 @@ export async function storePost(
  * @param options - Query options
  * @returns Promise with posts array
  */
+/**
+ * Query Sui directly for blob IDs
+ * Queries Sui events and blob objects to discover all blob IDs
+ */
+async function queryBlobIdsFromSui(): Promise<string[]> {
+  try {
+    const { suiClient } = await import('./sui');
+    
+    console.log('[queryBlobIdsFromSui] Querying Sui for blob IDs...');
+    
+    // Method 1: Query Sui events for Walrus blob creation
+    try {
+      const events = await suiClient.queryEvents({
+        query: {
+          MoveModule: {
+            package: '0x6c2547cbbc38025cf3adac45f63cb0a8d12ecf777cdc75a4971612bf97fdf6af', // Walrus testnet
+            module: 'walrus',
+          },
+        },
+        limit: 500,
+        order: 'descending',
+      });
+
+      const blobIds: string[] = [];
+      const addresses = new Set<string>();
+
+      for (const event of events.data) {
+        // Extract blobId from event
+        const blobId = event.parsedJson?.blobId || 
+                      event.parsedJson?.blob_id ||
+                      event.parsedJson?.id ||
+                      event.parsedJson?.blobObject?.blobId ||
+                      event.parsedJson?.blobObject?.id;
+        if (blobId) {
+          blobIds.push(blobId);
+        }
+
+        // Extract addresses to query for blob objects
+        const sender = event.sender || event.parsedJson?.sender || event.parsedJson?.owner;
+        if (sender) {
+          addresses.add(sender);
+        }
+      }
+
+      console.log(`[queryBlobIdsFromSui] Found ${blobIds.length} blob IDs from events, ${addresses.size} addresses`);
+
+      // Method 2: Query each address for their blob objects (with pagination - max 50 per page)
+      for (const address of addresses) {
+        try {
+          const allObjects: any[] = [];
+          let cursor: string | null = null;
+          const pageLimit = 50; // Sui RPC max limit
+          
+          do {
+            const response = await suiClient.getOwnedObjects({
+              owner: address,
+              options: {
+                showType: true,
+                showContent: true,
+              },
+              limit: pageLimit,
+              cursor: cursor || undefined,
+            });
+            
+            allObjects.push(...response.data);
+            cursor = response.hasNextPage ? response.nextCursor : null;
+          } while (cursor);
+
+          for (const obj of allObjects) {
+            const objType = obj.data?.type || '';
+            if (objType.includes('walrus') && (objType.includes('BlobObject') || objType.includes('Blob'))) {
+              const content = obj.data?.content;
+              if (content && typeof content === 'object') {
+                const blobId = (content as any).fields?.blobId || 
+                              (content as any).blobId || 
+                              (content as any).fields?.id ||
+                              obj.data.objectId;
+                if (blobId && !blobIds.includes(blobId)) {
+                  blobIds.push(blobId);
+                }
+              } else if (obj.data.objectId && !blobIds.includes(obj.data.objectId)) {
+                blobIds.push(obj.data.objectId);
+              }
+            }
+          }
+        } catch (err) {
+          console.debug(`[queryBlobIdsFromSui] Error querying objects for ${address}:`, err);
+        }
+      }
+
+      console.log(`[queryBlobIdsFromSui] Total unique blob IDs found: ${blobIds.length}`);
+      return blobIds;
+    } catch (error) {
+      console.error('[queryBlobIdsFromSui] Error querying Sui:', error);
+      return [];
+    }
+  } catch (error) {
+    console.error('[queryBlobIdsFromSui] Failed to import Sui client:', error);
+    return [];
+  }
+}
+
+/**
+ * Read a blob directly from Walrus aggregator
+ * Can read by blobId or by objectId
+ */
+export async function readBlobFromWalrus(blobIdOrObjectId: string, isObjectId: boolean = false): Promise<any> {
+  try {
+    // Walrus aggregator URL for testnet
+    const aggregatorUrl = 'https://aggregator.walrus-testnet.walrus.space';
+    
+    // According to Walrus docs, blobs can be read by object ID using /v1/blobs/by-object-id/<object-id>
+    const endpoint = isObjectId 
+      ? `${aggregatorUrl}/v1/blobs/by-object-id/${blobIdOrObjectId}`
+      : `${aggregatorUrl}/v1/blobs/${blobIdOrObjectId}`;
+    
+    const response = await fetch(endpoint, {
+      method: 'GET',
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to read blob: ${response.statusText}`);
+    }
+
+    const blobData = await response.text();
+    try {
+      return JSON.parse(blobData);
+    } catch {
+      // If not JSON, return as text
+      return { content: blobData };
+    }
+  } catch (error) {
+    console.debug(`[readBlobFromWalrus] Failed to read blob ${blobIdOrObjectId} (isObjectId: ${isObjectId}):`, error);
+    throw error;
+  }
+}
+
 export async function getPosts(options?: {
   ipTokenId?: string;
   mediaType?: 'image' | 'video' | 'text';
@@ -574,52 +712,275 @@ export async function getPosts(options?: {
   offset?: number;
 }): Promise<{ posts: Post[]; total: number }> {
   try {
-    const params = new URLSearchParams();
-    if (options?.ipTokenId) params.append('ipTokenId', options.ipTokenId);
-    if (options?.mediaType) params.append('mediaType', options.mediaType);
-    if (options?.limit) params.append('limit', options.limit.toString());
-    if (options?.offset) params.append('offset', options.offset.toString());
+    console.log('[getPosts] Querying Walrus directly (bypassing backend)...');
+    
+    // Step 1: Query Sui for blob IDs
+    const blobIds = await queryBlobIdsFromSui();
+    console.log(`[getPosts] Found ${blobIds.length} blob IDs from Sui`);
 
-    const url = `${API_BASE_URL}/api/posts${params.toString() ? `?${params.toString()}` : ''}`;
-    console.log('[getPosts] Fetching from:', url);
-    const response = await fetch(url);
+    // Step 2: Read each blob from Walrus aggregator
+    const posts: Post[] = [];
+    let readCount = 0;
+    let errorCount = 0;
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      let error;
+    for (const blobId of blobIds) {
       try {
-        error = JSON.parse(errorText);
-      } catch {
-        error = { error: errorText || `HTTP ${response.status}: ${response.statusText}` };
+        const blobData = await readBlobFromWalrus(blobId);
+        
+        // Check if it's a post (has post_type or engagement_type)
+        if (blobData.post_type === 'discover_post' || 
+            blobData.engagement_type === 'post' || 
+            blobData.type === 'post') {
+          
+          // Filter by mediaType if specified
+          if (options?.mediaType && blobData.mediaType !== options.mediaType) {
+            continue;
+          }
+
+          // Filter by ipTokenId if specified
+          if (options?.ipTokenId) {
+            const ipTokenIds = blobData.ipTokenIds || [];
+            if (!ipTokenIds.includes(options.ipTokenId)) {
+              continue;
+            }
+          }
+
+          posts.push({
+            id: blobId,
+            blobId,
+            ...blobData,
+            timestamp: blobData.timestamp || Date.now(),
+          } as Post);
+          readCount++;
+        }
+      } catch (error) {
+        errorCount++;
+        if (errorCount <= 5) {
+          console.debug(`[getPosts] Failed to read/blob ${blobId}:`, error);
+        }
       }
-      console.error('[getPosts] Backend error:', {
-        status: response.status,
-        statusText: response.statusText,
-        error,
-        url,
-      });
-      throw new Error(error.error || error.message || `Failed to fetch posts: ${response.statusText}`);
     }
 
-    const data = await response.json();
+    // Sort by timestamp (newest first)
+    posts.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+    // Apply pagination
+    const limit = options?.limit || 1000;
+    const offset = options?.offset || 0;
+    const paginatedPosts = posts.slice(offset, offset + limit);
+
+    console.log(`[getPosts] Successfully read ${readCount} posts from Walrus (${errorCount} errors)`);
     console.log('[getPosts] Response:', { 
-      success: data.success, 
-      total: data.total, 
-      postsCount: data.posts?.length,
-      hasPosts: !!data.posts && data.posts.length > 0,
+      total: posts.length,
+      postsCount: paginatedPosts.length,
+      hasPosts: paginatedPosts.length > 0,
     });
+
     return {
-      posts: data.posts || [],
-      total: data.total || 0,
+      posts: paginatedPosts,
+      total: posts.length,
     };
   } catch (error: any) {
-    console.error('[getPosts] Failed to fetch posts:', {
+    console.error('[getPosts] Failed to fetch posts from Walrus:', {
       error,
       message: error?.message,
-      name: error?.name,
-      stack: error?.stack,
     });
-    return { posts: [], total: 0 };
+    // Return empty array instead of throwing
+    return {
+      posts: [],
+      total: 0,
+    };
+  }
+}
+
+/**
+ * Get all posts by a specific wallet address
+ * Queries Sui for blob objects owned by the address, then reads from Walrus
+ * 
+ * @param walletAddress - Wallet address to query
+ * @returns Promise with posts array
+ */
+export async function getPostsByAddress(walletAddress: string): Promise<{ posts: Post[]; total: number }> {
+  try {
+    console.log(`[getPostsByAddress] Fetching posts for address: ${walletAddress}`);
+    
+    const { suiClient } = await import('./sui');
+    
+    // Query all objects owned by this address (with pagination - max 50 per page)
+    const allObjects: any[] = [];
+    let cursor: string | null = null;
+    const pageLimit = 50; // Sui RPC max limit
+    
+    do {
+      const response = await suiClient.getOwnedObjects({
+        owner: walletAddress,
+        options: {
+          showType: true,
+          showContent: true,
+        },
+        limit: pageLimit,
+        cursor: cursor || undefined,
+      });
+      
+      allObjects.push(...response.data);
+      cursor = response.hasNextPage ? response.nextCursor : null;
+      
+      console.log(`[getPostsByAddress] Fetched ${response.data.length} objects (total: ${allObjects.length}, hasNext: ${!!cursor})`);
+    } while (cursor);
+
+    console.log(`[getPostsByAddress] Found ${allObjects.length} total objects for address`);
+
+    // Store both objectId and blobId for each blob object
+    // We'll try reading by objectId first (recommended by Walrus docs)
+    interface BlobInfo {
+      objectId: string;
+      blobId?: string;
+    }
+    const blobInfos: BlobInfo[] = [];
+    
+    // Debug: Log all object types to see what we're getting
+    console.log(`[getPostsByAddress] Inspecting ${allObjects.length} objects...`);
+    const objectTypes = allObjects.slice(0, 5).map(obj => ({
+      type: obj.data?.type || 'unknown',
+      objectId: obj.data?.objectId,
+      hasContent: !!obj.data?.content,
+      contentType: obj.data?.content?.dataType || typeof obj.data?.content,
+      contentFields: obj.data?.content && typeof obj.data.content === 'object' && 'fields' in obj.data.content
+        ? Object.keys((obj.data.content as any).fields || {})
+        : [],
+    }));
+    console.log('[getPostsByAddress] Sample object types:', objectTypes);
+    
+    // Filter for Walrus blob objects
+    // Try multiple patterns - blob objects might have different type formats
+    for (const obj of allObjects) {
+      const objType = obj.data?.type || '';
+      const objectId = obj.data?.objectId;
+      
+      // Check if it's a Walrus blob object
+      // Walrus blob objects can have types like:
+      // - '0x...::walrus::BlobObject' (standard Walrus)
+      // - '0x...::blob::Blob' (alternative format)
+      const isWalrusBlob = (objType.includes('walrus') && 
+                           (objType.includes('BlobObject') || objType.includes('Blob'))) ||
+                          (objType.includes('::blob::Blob') || objType.endsWith('::blob::Blob'));
+      
+      if (isWalrusBlob) {
+        console.log(`[getPostsByAddress] Found Walrus blob object: ${objectId}, type: ${objType}`);
+        const content = obj.data?.content;
+        if (content && typeof content === 'object') {
+          // Try multiple field names for blobId
+          // For blob::Blob objects, the blobId might be in fields.blob_id or fields.id
+          const fields = (content as any).fields || {};
+          const blobId = fields.blobId || 
+                        fields.blob_id ||
+                        fields.id ||
+                        (content as any).blobId || 
+                        (content as any).blob_id ||
+                        (content as any).id;
+          
+          console.log(`[getPostsByAddress] Extracted blobId: ${blobId} from object ${objectId}`, {
+            fields: Object.keys(fields),
+            blobId,
+          });
+          
+          // Store both objectId and blobId - we'll try reading by objectId first
+          blobInfos.push({
+            objectId,
+            blobId: blobId || undefined,
+          });
+        } else {
+          // If no content structure, use objectId only
+          console.log(`[getPostsByAddress] Using objectId only: ${objectId}`);
+          blobInfos.push({
+            objectId,
+          });
+        }
+      }
+    }
+
+    console.log(`[getPostsByAddress] Found ${blobInfos.length} blob objects`);
+
+    // Read each blob from Walrus aggregator
+    // Try reading by objectId first (recommended by Walrus docs), then fallback to blobId
+    const posts: Post[] = [];
+    let readCount = 0;
+    let errorCount = 0;
+
+    for (const blobInfo of blobInfos) {
+      try {
+        let blobData: any = null;
+        let readMethod = '';
+        
+        // Try reading by objectId first (recommended method per Walrus docs)
+        try {
+          blobData = await readBlobFromWalrus(blobInfo.objectId, true);
+          readMethod = 'objectId';
+          console.log(`[getPostsByAddress] Successfully read blob by objectId: ${blobInfo.objectId}`);
+        } catch (objectIdError) {
+          // If objectId fails and we have a blobId, try that
+          if (blobInfo.blobId) {
+            try {
+              blobData = await readBlobFromWalrus(blobInfo.blobId, false);
+              readMethod = 'blobId';
+              console.log(`[getPostsByAddress] Successfully read blob by blobId: ${blobInfo.blobId}`);
+            } catch (blobIdError) {
+              throw new Error(`Both objectId and blobId failed: objectId=${objectIdError}, blobId=${blobIdError}`);
+            }
+          } else {
+            throw objectIdError;
+          }
+        }
+        
+        // Check if it's a post
+        if (blobData && (blobData.post_type === 'discover_post' || 
+            blobData.engagement_type === 'post' || 
+            blobData.type === 'post' ||
+            blobData.content?.post_type === 'discover_post')) {
+          
+          // Parse content if it's a string
+          let postData = blobData;
+          if (typeof blobData.content === 'string') {
+            try {
+              postData = JSON.parse(blobData.content);
+            } catch {
+              // If parsing fails, use the content as-is
+              postData = { content: blobData.content };
+            }
+          }
+          
+          posts.push({
+            id: blobInfo.objectId,
+            blobId: blobInfo.blobId || blobInfo.objectId,
+            ...postData,
+            timestamp: postData.timestamp || Date.now(),
+          } as Post);
+          readCount++;
+        }
+      } catch (error) {
+        errorCount++;
+        console.debug(`[getPostsByAddress] Failed to read blob objectId=${blobInfo.objectId}, blobId=${blobInfo.blobId}:`, error);
+      }
+    }
+
+    // Sort by timestamp (newest first)
+    posts.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+    console.log(`[getPostsByAddress] Successfully read ${readCount} posts (${errorCount} errors)`);
+    
+    return {
+      posts,
+      total: posts.length,
+    };
+  } catch (error: any) {
+    console.error('[getPostsByAddress] Failed to fetch posts:', {
+      error,
+      message: error?.message,
+    });
+    return {
+      posts: [],
+      total: 0,
+    };
   }
 }
 

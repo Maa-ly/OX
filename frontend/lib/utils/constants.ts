@@ -50,8 +50,9 @@ export const ORACLE_ADMIN_CAP_ID =
   '0x75935be68ba984830004bb2271f93dc759d417d22ee1878dc84c75a42cb7b7b5';
 
 // Backend API URL
+// Backend typically runs on port 3001 to avoid conflict with Next.js frontend (port 3000)
 export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000';
+  process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001';
 
 // Sui RPC URL
 export const SUI_RPC_URL =

@@ -1277,12 +1277,16 @@ export class WalrusService {
     try {
       logger.info('Querying Sui for blob objects...');
       
-      // Method 1: Query Sui for blob objects by type
-      // Walrus blob objects have type: 0x...::walrus::BlobObject
-      // We need to query all objects of this type
+      // Method 1: Query Sui for blob objects by type (works for owned objects too)
+      // Note: queryObjects might not be available in all Sui SDK versions
+      // Skip this method if not available
       try {
-        // Query objects by type (if we know the exact type)
-        // Note: This requires knowing the package ID for walrus
+        // Check if queryObjects method exists
+        if (typeof this.suiClient.queryObjects !== 'function') {
+          logger.debug('queryObjects not available in Sui SDK, skipping type query');
+          throw new Error('queryObjects not available');
+        }
+        
         const objects = await this.suiClient.queryObjects({
           filter: {
             StructType: '0x6c2547cbbc38025cf3adac45f63cb0a8d12ecf777cdc75a4971612bf97fdf6af::walrus::BlobObject',
@@ -1290,9 +1294,12 @@ export class WalrusService {
           options: {
             showType: true,
             showContent: true,
+            showOwner: true,
           },
           limit,
         });
+
+        logger.info(`Found ${objects.data.length} blob objects from Sui queryObjects`);
 
         const blobIds = [];
         for (const obj of objects.data) {
@@ -1300,53 +1307,127 @@ export class WalrusService {
             // Extract blobId from object content
             const content = obj.data?.content;
             if (content && typeof content === 'object' && 'fields' in content) {
-              const blobId = content.fields?.blobId || content.fields?.id;
+              const blobId = content.fields?.blobId || content.fields?.id || content.fields?.blob_id;
               if (blobId) {
                 blobIds.push(blobId);
+              } else {
+                // Fallback: use object ID if blobId not found in fields
+                logger.debug(`No blobId in fields for object ${obj.data?.objectId}, using objectId`);
+                blobIds.push(obj.data.objectId);
               }
+            } else {
+              // Fallback: use object ID
+              blobIds.push(obj.data.objectId);
             }
           } catch (err) {
             logger.debug(`Error extracting blobId from object ${obj.data?.objectId}:`, err.message);
+            // Still try to use objectId as fallback
+            if (obj.data?.objectId) {
+              blobIds.push(obj.data.objectId);
+            }
           }
         }
 
         if (blobIds.length > 0) {
-          logger.info(`Found ${blobIds.length} blob IDs from Sui blob objects`);
+          logger.info(`Found ${blobIds.length} blob IDs from Sui blob objects (by type)`);
           return blobIds;
         }
       } catch (typeQueryError) {
-        logger.debug('Failed to query blob objects by type, trying events:', typeQueryError.message);
+        logger.warn('Failed to query blob objects by type:', typeQueryError.message);
       }
 
-      // Method 2: Fallback to querying events
-      logger.info('Querying Sui events for blob creation...');
-      const events = await this.suiClient.queryEvents({
-        query: {
-          MoveModule: {
-            package: '0x6c2547cbbc38025cf3adac45f63cb0a8d12ecf777cdc75a4971612bf97fdf6af', // Walrus system object (testnet)
-            module: 'walrus',
-            event: 'BlobCreated',
+      // Method 2: Query events to get addresses, then query each address for blob objects
+      logger.info('Querying Sui events for blob creation addresses...');
+      try {
+        // Query all Walrus events (not just BlobCreated, to catch all activity)
+        const events = await this.suiClient.queryEvents({
+          query: {
+            MoveModule: {
+              package: '0x6c2547cbbc38025cf3adac45f63cb0a8d12ecf777cdc75a4971612bf97fdf6af',
+              module: 'walrus',
+            },
           },
-        },
-        limit,
-        order: 'descending',
-      });
+          limit: 500, // Get more events to find addresses
+          order: 'descending',
+        });
 
-      const blobIds = [];
-      for (const event of events.data) {
-        const blobId = event.parsedJson?.blobId || 
-                      event.parsedJson?.blob_id ||
-                      event.parsedJson?.id ||
-                      event.parsedJson?.blobObject?.blobId;
-        if (blobId) {
-          blobIds.push(blobId);
+        logger.info(`Found ${events.data.length} Walrus events`);
+
+        // Extract unique addresses from events (sender, owner, or from transaction)
+        const addresses = new Set();
+        const blobIds = [];
+        
+        for (const event of events.data) {
+          // Try to get blobId from event
+          const blobId = event.parsedJson?.blobId || 
+                        event.parsedJson?.blob_id ||
+                        event.parsedJson?.id ||
+                        event.parsedJson?.blobObject?.blobId ||
+                        event.parsedJson?.blobObject?.id;
+          if (blobId) {
+            blobIds.push(blobId);
+          }
+          
+          // Extract sender/owner address from various possible fields
+          const sender = event.sender || 
+                        event.parsedJson?.sender || 
+                        event.parsedJson?.owner ||
+                        event.parsedJson?.user ||
+                        event.parsedJson?.author;
+          if (sender) {
+            addresses.add(sender);
+          }
+          
+          // Also try to get address from transaction sender
+          if (event.id?.txDigest) {
+            try {
+              const tx = await this.suiClient.getTransactionBlock({
+                digest: event.id.txDigest,
+                options: { showEffects: true },
+              });
+              if (tx.transaction?.data?.sender) {
+                addresses.add(tx.transaction.data.sender);
+              }
+            } catch (txError) {
+              // Ignore errors fetching transaction
+            }
+          }
         }
+
+        logger.info(`Extracted ${addresses.size} unique addresses from events`);
+
+        // If we found addresses, query each for their blob objects
+        if (addresses.size > 0) {
+          logger.info(`Querying ${addresses.size} addresses for blob objects...`);
+          for (const address of addresses) {
+            try {
+              const ownerBlobIds = await this.queryBlobsByOwner(address);
+              logger.info(`Found ${ownerBlobIds.length} blob objects for address ${address.slice(0, 10)}...`);
+              blobIds.push(...ownerBlobIds);
+            } catch (err) {
+              logger.debug(`Error querying blobs for ${address}:`, err.message);
+            }
+          }
+        }
+
+        // Remove duplicates
+        const uniqueBlobIds = [...new Set(blobIds)];
+        logger.info(`Found ${uniqueBlobIds.length} unique blob IDs from Sui events and addresses`);
+        return uniqueBlobIds;
+      } catch (eventError) {
+        logger.warn('Failed to query events:', {
+          message: eventError.message,
+          stack: eventError.stack,
+        });
       }
 
-      logger.info(`Found ${blobIds.length} blob IDs from Sui events`);
-      return blobIds;
+      logger.warn('All methods failed to query blob IDs from Sui');
+      return [];
     } catch (error) {
-      logger.warn('Failed to query blob IDs from Sui:', error.message);
+      logger.error('Failed to query blob IDs from Sui:', {
+        message: error.message,
+        stack: error.stack,
+      });
       return [];
     }
   }
@@ -1368,19 +1449,41 @@ export class WalrusService {
       logger.info('Getting all posts from Walrus (querying Sui FIRST)', { userAddress, ipTokenId });
 
       let allPosts = [];
+      let indexedBlobIds = new Set(); // Declare outside if/else so it's accessible everywhere
 
       if (userAddress) {
         // Query posts for specific user (direct from Sui)
-        const userPosts = await this.getContributionsByOwner(userAddress);
-        allPosts = userPosts;
-      } else {
-        // COMBINE BOTH METHODS: Use indexer for immediate posts + Sui for discovery
-        // This ensures recently indexed posts appear immediately, while Sui discovers older posts
-        
-        // Method 1: Check in-memory indexer first (for recently indexed posts)
-        let indexedBlobIds = new Set();
+        logger.info(`Querying posts for user: ${userAddress}`);
         try {
-          // Use singleton instance to avoid circular dependency
+          const userPosts = await this.getContributionsByOwner(userAddress);
+          allPosts = userPosts || [];
+          logger.info(`Found ${allPosts.length} posts for user ${userAddress}`);
+        } catch (userError) {
+          logger.error(`Error querying posts for user ${userAddress}:`, userError);
+          // Return empty array instead of throwing
+          allPosts = [];
+        }
+      } else {
+        // PRIMARY METHOD: Query Sui events directly to discover ALL blob IDs
+        // This is the main way to get posts - no backend dependency!
+        logger.info('Querying Sui events for blob IDs (PRIMARY METHOD)...');
+        let suiBlobIds = [];
+        try {
+          suiBlobIds = await this.queryAllBlobIdsFromSui(1000);
+          logger.info(`Found ${suiBlobIds.length} blob IDs from Sui`);
+        } catch (suiError) {
+          logger.error('Error querying Sui for blob IDs:', {
+            message: suiError?.message,
+            stack: suiError?.stack,
+          });
+          // Continue with empty array - will try indexer fallback
+          suiBlobIds = [];
+        }
+
+        // SECONDARY METHOD: Check in-memory indexer (for recently indexed posts)
+        // Also extract addresses from indexed posts to query their blob objects
+        const addressesToQuery = new Set();
+        try {
           const { getIndexerService } = await import('./walrus-indexer.js');
           const indexerService = getIndexerService();
           
@@ -1388,32 +1491,53 @@ export class WalrusService {
           
           if (indexedPosts && indexedPosts.length > 0) {
             logger.info(`Found ${indexedPosts.length} posts from in-memory index`);
-            // Add indexed posts directly
             for (const post of indexedPosts) {
               const blobId = post.blobId || post.id;
               if (blobId) {
                 indexedBlobIds.add(blobId);
-                allPosts.push({
-                  id: blobId,
-                  blobId,
-                  ...post,
-                });
+                // Only add if not already in Sui results
+                if (!suiBlobIds.includes(blobId)) {
+                  allPosts.push({
+                    id: blobId,
+                    blobId,
+                    ...post,
+                  });
+                }
+              }
+              // Collect addresses from indexed posts to query their blob objects
+              if (post.authorAddress || post.author) {
+                addressesToQuery.add(post.authorAddress || post.author);
               }
             }
-          } else {
-            logger.info('In-memory indexer is empty (no posts indexed yet)');
           }
         } catch (indexerError) {
           logger.warn('In-memory indexer not available:', indexerError.message);
         }
-        
-        // Method 2: Query Sui events to discover additional posts (not in indexer)
-        logger.info('Querying Sui events for additional blob IDs...');
-        const suiBlobIds = await this.queryAllBlobIdsFromSui(1000); // Increased limit to get more posts
-        
-        logger.info(`Found ${suiBlobIds.length} blob IDs from Sui events`);
 
-        // Read each blob from Sui that's not already in our list
+        // TERTIARY METHOD: If Sui query found 0 blobs, query addresses from indexer
+        // This helps discover posts even if Sui events query fails
+        if (suiBlobIds.length === 0 && addressesToQuery.size > 0) {
+          logger.info(`Querying ${addressesToQuery.size} addresses from indexer for blob objects...`);
+          for (const address of addressesToQuery) {
+            try {
+              const ownerBlobIds = await this.queryBlobsByOwner(address);
+              logger.info(`Found ${ownerBlobIds.length} blob objects for address ${address}`);
+              for (const blobId of ownerBlobIds) {
+                if (!indexedBlobIds.has(blobId) && !suiBlobIds.includes(blobId)) {
+                  suiBlobIds.push(blobId);
+                }
+              }
+            } catch (err) {
+              logger.debug(`Error querying blobs for ${address}:`, err.message);
+            }
+          }
+        }
+
+        // Read each blob from Walrus aggregator
+        logger.info(`Reading ${suiBlobIds.length} blobs from Walrus aggregator...`);
+        let readCount = 0;
+        let errorCount = 0;
+        
         for (const blobId of suiBlobIds) {
           // Skip if already added from indexer
           if (indexedBlobIds.has(blobId)) {
@@ -1422,18 +1546,24 @@ export class WalrusService {
           
           try {
             const contribution = await this.readContribution(blobId);
-            if (contribution && (contribution.post_type === 'discover_post' || contribution.engagement_type === 'post')) {
+            if (contribution && (contribution.post_type === 'discover_post' || contribution.engagement_type === 'post' || contribution.type === 'post')) {
               allPosts.push({
                 id: blobId,
                 blobId,
                 ...contribution,
               });
+              readCount++;
             }
-          } catch (error) {
+          } catch (readError) {
             // Blob might not be certified yet or might not be a post
-            logger.debug(`Could not read blob ${blobId}:`, error.message);
+            errorCount++;
+            if (errorCount <= 5) { // Only log first 5 errors to avoid spam
+              logger.debug(`Could not read blob ${blobId}:`, readError.message);
+            }
           }
         }
+        
+        logger.info(`Successfully read ${readCount} posts from Walrus, ${errorCount} errors`);
       }
 
       // Filter by IP token if specified
@@ -1447,14 +1577,21 @@ export class WalrusService {
       allPosts.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
 
       logger.info(`Found ${allPosts.length} total posts from Walrus`, {
-        fromIndexer: indexedBlobIds?.size || 0,
-        fromSui: allPosts.length - (indexedBlobIds?.size || 0),
         total: allPosts.length,
+        fromIndexer: indexedBlobIds.size,
+        fromSui: allPosts.length - indexedBlobIds.size,
       });
-      return allPosts;
+      
+      // Always return an array, even if empty
+      return allPosts || [];
     } catch (error) {
-      logger.error('Error getting all posts:', error);
-      throw new Error(`Failed to get all posts: ${error.message}`);
+      logger.error('Error getting all posts:', {
+        message: error?.message,
+        stack: error?.stack,
+        name: error?.name,
+      });
+      // Return empty array instead of throwing to prevent 500 errors
+      return [];
     }
   }
 }

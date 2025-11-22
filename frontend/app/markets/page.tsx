@@ -46,7 +46,8 @@ export default function MarketsPage() {
     setError(null);
     try {
       // Log API base URL for debugging
-      const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000';
+      // Backend runs on port 3001 to avoid conflict with Next.js frontend (port 3000)
+      const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001';
       console.log('API Base URL:', apiBase);
       
       // Fetch tokens with detailed info
@@ -143,11 +144,23 @@ export default function MarketsPage() {
       if (filteredMarkets.length === 0) {
         setError('No tokens found. Make sure the backend API is accessible and tokens are deployed.');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to load markets:', err);
-      const errorMessage = err instanceof Error ? err.message : 'Failed to load markets';
-      const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000';
-      setError(`${errorMessage}. API URL: ${apiBase}. Please check your environment variables.`);
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      // Backend runs on port 3001 to avoid conflict with Next.js frontend (port 3000)
+      const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001';
+      
+      // More helpful error message
+      let userMessage = errorMessage;
+      if (errorMessage.includes('Failed to fetch') || errorMessage.includes('NetworkError')) {
+        userMessage = `Cannot connect to backend API at ${apiBase}. Make sure the backend server is running.`;
+      } else if (errorMessage.includes('404')) {
+        userMessage = `Backend endpoint not found. The API at ${apiBase} may not have the tokens endpoint.`;
+      } else if (errorMessage.includes('CORS')) {
+        userMessage = `CORS error. The backend at ${apiBase} may not allow requests from this origin.`;
+      }
+      
+      setError(`${userMessage} API URL: ${apiBase}`);
     } finally {
       setLoading(false);
     }

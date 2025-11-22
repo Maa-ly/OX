@@ -1,7 +1,8 @@
 // API utilities for backend communication
 // Merged from src/lib/api.ts with improvements
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000';
+// Backend runs on port 3001 to avoid conflict with Next.js frontend (port 3000)
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001';
 
 // Log API base URL in development (helps debug environment variable issues)
 if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {

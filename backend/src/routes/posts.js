@@ -3,7 +3,8 @@ import multer from 'multer';
 import { logger } from '../utils/logger.js';
 import { WalrusService } from '../services/walrus.js';
 import { WalrusIndexerService, getIndexerService } from '../services/walrus-indexer.js';
-import { blobStorage } from '../services/blob-storage.js';
+import { mongoDBBlobStorage } from '../services/mongodb-blob-storage.js';
+import { blobStorage } from '../services/blob-storage.js'; // Fallback
 
 const router = express.Router();
 const walrusService = new WalrusService();
@@ -44,16 +45,67 @@ router.post('/index', async (req, res, next) => {
       });
     }
 
-    // If no IP token IDs provided, index under "all" token so everyone can see it
-    const ipTokenIds = post?.ipTokenIds && Array.isArray(post.ipTokenIds) && post.ipTokenIds.length > 0
+    // Always index under "all" so everyone can see it, plus any specific IP token IDs
+    const specificIpTokenIds = post?.ipTokenIds && Array.isArray(post.ipTokenIds) && post.ipTokenIds.length > 0
       ? post.ipTokenIds
-      : ['all']; // Special token ID for posts without specific IP tokens
+      : [];
+    
+    // Always include 'all' so posts are visible to everyone
+    const ipTokenIds = ['all', ...specificIpTokenIds];
 
     logger.info(`Indexing post for IP tokens: ${ipTokenIds.join(', ')}, blobId: ${blobId}`);
 
-    // No need to store blob IDs separately - Walrus IS the database!
-    // The blob is already stored on Walrus/Sui, and we can query it directly.
-    // We only index it in-memory for faster queries (optional optimization).
+    // Store blob ID persistently in MongoDB (like the NFT project does)
+    // This ensures blob IDs persist across server restarts
+    const authorAddress = post?.authorAddress;
+    if (authorAddress) {
+      try {
+        // Try MongoDB first
+        try {
+          await mongoDBBlobStorage.addBlobId(authorAddress, blobId, {
+            post_type: 'discover_post',
+            engagement_type: 'post',
+            ...post,
+            walrusResponse,
+          });
+          logger.info(`Persisted blob ID ${blobId} for user ${authorAddress} in MongoDB`);
+        } catch (mongoError) {
+          // Fallback to file-based storage
+          logger.warn('MongoDB storage failed, using file storage:', mongoError.message);
+          await blobStorage.addBlobId(blobId, {
+            post_type: 'discover_post',
+            engagement_type: 'post',
+            ...post,
+            walrusResponse,
+          }, authorAddress);
+        }
+      } catch (storageError) {
+        logger.warn(`Failed to persist blob ID:`, storageError);
+        // Don't fail the request - blob is still indexed in-memory
+      }
+    }
+
+    // Also store media blob ID if present
+    if (post?.mediaBlobId && authorAddress) {
+      try {
+        try {
+          await mongoDBBlobStorage.addBlobId(authorAddress, post.mediaBlobId, {
+            mediaType: post.mediaType,
+            isMedia: true,
+          });
+          logger.info(`Persisted media blob ID ${post.mediaBlobId} for user ${authorAddress} in MongoDB`);
+        } catch (mongoError) {
+          logger.warn('MongoDB storage failed for media, using file storage:', mongoError.message);
+          await blobStorage.addBlobId(post.mediaBlobId, {
+            mediaType: post.mediaType,
+            isMedia: true,
+          }, authorAddress);
+        }
+      } catch (storageError) {
+        logger.warn(`Failed to persist media blob ID:`, storageError);
+      }
+    }
+
     logger.info(`Post uploaded to Walrus: ${blobId}`, {
       hasFullResponse: !!walrusResponse,
       objectId: walrusResponse?.newlyCreated?.blobObject?.id,
@@ -175,14 +227,62 @@ router.get('/', async (req, res, next) => {
 
     logger.info('Fetching all posts', { ipTokenId, mediaType, userAddress, limit, offset });
 
-    // Query Walrus directly (like we do for tokens) - no index needed!
-    // This ensures posts persist across server restarts
-    let allPosts = await walrusService.getAllPosts({
-      userAddress,
-      ipTokenId,
-    });
+    // Get posts from persistent blob storage first (like the NFT project)
+    let allPosts = [];
     
-    logger.info(`Found ${allPosts.length} total posts from Walrus`);
+    if (userAddress) {
+      // Get blob IDs for this user from persistent storage
+      try {
+        const blobIds = blobStorage.getUserBlobIds(userAddress);
+        logger.info(`Found ${blobIds.length} blob IDs for user ${userAddress} from persistent storage`);
+        
+        // Read each blob from Walrus
+        for (const blobId of blobIds) {
+          try {
+            const contribution = await walrusService.readContribution(blobId);
+            if (contribution.post_type === 'discover_post' || contribution.engagement_type === 'post') {
+              allPosts.push(contribution);
+            }
+          } catch (readError) {
+            logger.debug(`Failed to read blob ${blobId}:`, readError);
+          }
+        }
+      } catch (storageError) {
+        logger.warn('Failed to read from persistent storage, falling back to Sui query:', storageError);
+      }
+    } else {
+      // Get all blob IDs from all users
+      try {
+        const allBlobIds = blobStorage.getAllUserBlobIds();
+        logger.info(`Found ${allBlobIds.length} total blob IDs from persistent storage`);
+        
+        // Read each blob from Walrus
+        for (const blobId of allBlobIds) {
+          try {
+            const contribution = await walrusService.readContribution(blobId);
+            if (contribution.post_type === 'discover_post' || contribution.engagement_type === 'post') {
+              allPosts.push(contribution);
+            }
+          } catch (readError) {
+            logger.debug(`Failed to read blob ${blobId}:`, readError);
+          }
+        }
+      } catch (storageError) {
+        logger.warn('Failed to read from persistent storage, falling back to Sui query:', storageError);
+      }
+    }
+    
+    // Fallback: Query Walrus/Sui directly if persistent storage is empty
+    if (allPosts.length === 0) {
+      logger.info('No posts from persistent storage, querying Walrus/Sui directly...');
+      allPosts = await walrusService.getAllPosts({
+        userAddress,
+        ipTokenId,
+      });
+      logger.info(`Found ${allPosts.length} total posts from Walrus/Sui`);
+    } else {
+      logger.info(`Found ${allPosts.length} total posts from persistent storage`);
+    }
 
     // If userAddress is provided, filter to show only that user's posts
     // Otherwise, show ALL posts (everyone can see everyone's posts)
@@ -541,6 +641,126 @@ router.post('/reindex', async (req, res, next) => {
   } catch (error) {
     logger.error('Error re-indexing:', error);
     next(error);
+  }
+});
+
+/**
+ * Manual endpoint to retrieve all blob IDs
+ * GET /api/posts/manual-blob-ids
+ * 
+ * This endpoint tries multiple methods to find blob IDs:
+ * 1. Query Sui events
+ * 2. Query Sui blob objects by type
+ * 3. Query known addresses for blob objects
+ */
+router.get('/manual-blob-ids', async (req, res, next) => {
+  try {
+    logger.info('Manual blob ID retrieval requested');
+    
+    const results = {
+      fromSuiEvents: [],
+      fromSuiObjects: [],
+      fromKnownAddresses: [],
+      allBlobIds: [],
+    };
+
+    // Method 1: Query Sui events
+    try {
+      logger.info('Method 1: Querying Sui events...');
+      const events = await walrusService.suiClient.queryEvents({
+        query: {
+          MoveModule: {
+            package: '0x6c2547cbbc38025cf3adac45f63cb0a8d12ecf777cdc75a4971612bf97fdf6af',
+            module: 'walrus',
+          },
+        },
+        limit: 500,
+        order: 'descending',
+      });
+
+      logger.info(`Found ${events.data.length} Walrus events`);
+      
+      for (const event of events.data) {
+        const blobId = event.parsedJson?.blobId || 
+                      event.parsedJson?.blob_id ||
+                      event.parsedJson?.id ||
+                      event.parsedJson?.blobObject?.blobId ||
+                      event.parsedJson?.blobObject?.id;
+        if (blobId && !results.fromSuiEvents.includes(blobId)) {
+          results.fromSuiEvents.push(blobId);
+        }
+      }
+      
+      logger.info(`Extracted ${results.fromSuiEvents.length} blob IDs from events`);
+    } catch (error) {
+      logger.error('Error querying Sui events:', error.message);
+    }
+
+    // Method 2: Query blob objects by owner (if we have addresses from events)
+    try {
+      const addresses = new Set();
+      
+      // Get addresses from events
+      const events = await walrusService.suiClient.queryEvents({
+        query: {
+          MoveModule: {
+            package: '0x6c2547cbbc38025cf3adac45f63cb0a8d12ecf777cdc75a4971612bf97fdf6af',
+            module: 'walrus',
+          },
+        },
+        limit: 100,
+        order: 'descending',
+      });
+
+      for (const event of events.data) {
+        const sender = event.sender || event.parsedJson?.sender || event.parsedJson?.owner;
+        if (sender) {
+          addresses.add(sender);
+        }
+      }
+
+      logger.info(`Found ${addresses.size} addresses from events, querying for blob objects...`);
+
+      for (const address of addresses) {
+        try {
+          const blobIds = await walrusService.queryBlobsByOwner(address);
+          results.fromKnownAddresses.push(...blobIds);
+          logger.info(`Found ${blobIds.length} blob objects for address ${address.slice(0, 10)}...`);
+        } catch (err) {
+          logger.debug(`Error querying blobs for ${address}:`, err.message);
+        }
+      }
+    } catch (error) {
+      logger.error('Error querying blob objects by owner:', error.message);
+    }
+
+    // Combine all blob IDs and remove duplicates
+    results.allBlobIds = [...new Set([
+      ...results.fromSuiEvents,
+      ...results.fromKnownAddresses,
+    ])];
+
+    logger.info(`Total unique blob IDs found: ${results.allBlobIds.length}`);
+
+    res.json({
+      success: true,
+      total: results.allBlobIds.length,
+      methods: {
+        fromSuiEvents: results.fromSuiEvents.length,
+        fromKnownAddresses: results.fromKnownAddresses.length,
+      },
+      blobIds: results.allBlobIds,
+      details: {
+        fromSuiEvents: results.fromSuiEvents,
+        fromKnownAddresses: results.fromKnownAddresses,
+      },
+    });
+  } catch (error) {
+    logger.error('Error in manual blob ID retrieval:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
   }
 });
 

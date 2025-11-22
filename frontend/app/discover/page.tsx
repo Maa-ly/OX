@@ -6,7 +6,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { MobileBottomNav, MobileSidebar } from "@/components/mobile-nav";
 import { getIPTokens, type IPToken } from "@/lib/utils/api";
-import { storePost, getPosts, likePost, commentOnPost, type Post } from "@/lib/utils/walrus";
+import { storePost, getPosts, getPostsByAddress, likePost, commentOnPost, type Post } from "@/lib/utils/walrus";
 import { useWalletAuth } from "@/lib/hooks/useWalletAuth";
 import { useZkLogin } from "@/lib/hooks/useZkLogin";
 import { useAuthStore } from "@/lib/stores/auth-store";
@@ -103,16 +103,208 @@ function DiscoverPageContent() {
       else if (activeFilter === 'videos') mediaType = 'video';
       else if (activeFilter === 'discussions') mediaType = 'text';
       
-      console.log('[loadPosts] Fetching posts...', { mediaType, limit: 1000 });
-      const result = await getPosts({
-        mediaType: mediaType,
-        limit: 1000, // Get all posts
-      });
+      console.log('[loadPosts] Fetching posts...', { mediaType, limit: 1000, walletAddress });
+      
+      // Get stored blob IDs from localStorage
+      const { getAllBlobIds, getUserBlobIds } = await import('@/lib/utils/blob-storage');
+      const { readBlobFromWalrus } = await import('@/lib/utils/walrus');
+      
+      let storedBlobIds: string[] = [];
+      if (walletAddress) {
+        // Get blob IDs for the connected wallet
+        storedBlobIds = getUserBlobIds(walletAddress);
+        console.log('[loadPosts] Found stored blob IDs for user:', { 
+          userAddress: walletAddress, 
+          blobIds: storedBlobIds.length 
+        });
+      } else {
+        // Get all blob IDs from all users
+        storedBlobIds = getAllBlobIds();
+        console.log('[loadPosts] Found stored blob IDs from all users:', storedBlobIds.length);
+      }
+      
+      // Fetch posts from stored blob IDs
+      const postsFromStorage: Post[] = [];
+      for (const blobId of storedBlobIds) {
+        try {
+          const blobData = await readBlobFromWalrus(blobId, false);
+          
+          // Parse blob data
+          let postData: any = null;
+          if (typeof blobData === 'object' && blobData !== null) {
+            if (blobData.content && typeof blobData.content === 'string') {
+              // Check if content is binary/image data
+              const contentStr = blobData.content;
+              if (contentStr.startsWith('RIFF') || contentStr.startsWith('\x89PNG') || 
+                  contentStr.startsWith('GIF') || contentStr.startsWith('ÿØÿà')) {
+                // It's binary image data - create a post object with image URL
+                const aggregatorUrl = 'https://aggregator.walrus-testnet.walrus.space';
+                const imageUrl = `${aggregatorUrl}/v1/blobs/${blobId}`;
+                postData = {
+                  content: '',
+                  mediaUrl: imageUrl,
+                  mediaType: 'image',
+                  author: 'Unknown',
+                  authorAddress: '0x0000000000000000000000000000000000000000',
+                  timestamp: Date.now(),
+                };
+              } else {
+                // Try to parse as JSON
+                try {
+                  postData = JSON.parse(blobData.content);
+                } catch {
+                  postData = { content: blobData.content };
+                }
+              }
+            } else {
+              postData = blobData;
+            }
+          } else {
+            postData = { content: blobData };
+          }
+          
+          // Ensure required fields exist
+          if (postData && (postData.post_type === 'discover_post' || 
+              postData.engagement_type === 'post' || 
+              postData.type === 'post' ||
+              postData.content || postData.mediaUrl)) {
+            postsFromStorage.push({
+              id: blobId,
+              blobId: blobId,
+              author: postData.author || postData.authorAddress?.slice(0, 6) + '...' + postData.authorAddress?.slice(-4) || 'Unknown',
+              authorAddress: postData.authorAddress || '0x0000000000000000000000000000000000000000',
+              content: postData.content || '',
+              mediaUrl: postData.mediaUrl || postData.media_url,
+              mediaType: postData.mediaType || postData.media_type || (postData.mediaUrl ? 'image' : 'text'),
+              timestamp: postData.timestamp || Date.now(),
+              ...postData,
+            } as Post);
+          }
+        } catch (error) {
+          console.debug(`[loadPosts] Failed to read stored blob ${blobId}:`, error);
+        }
+      }
+      
+      console.log('[loadPosts] Posts from stored blob IDs:', postsFromStorage.length);
+      
+      let result;
+      
+      // If wallet is connected, try to get posts by address first (more reliable)
+      if (walletAddress) {
+        try {
+          console.log('[loadPosts] Fetching posts by wallet address:', walletAddress);
+          result = await getPostsByAddress(walletAddress);
+          console.log('[loadPosts] Posts fetched by address:', { 
+            total: result.total, 
+            postsCount: result.posts.length,
+          });
+          
+          // Merge with posts from storage (avoid duplicates)
+          const existingIds = new Set(result.posts.map(p => p.blobId || p.id));
+          const newPosts = postsFromStorage.filter(p => !existingIds.has(p.blobId || p.id));
+          result.posts = [...result.posts, ...newPosts];
+          result.total = result.posts.length;
+          
+          // If we got posts, filter by mediaType if needed
+          if (result.posts.length > 0 && mediaType) {
+            result.posts = result.posts.filter(p => p.mediaType === mediaType);
+            result.total = result.posts.length;
+          }
+        } catch (addressError) {
+          console.warn('[loadPosts] Failed to fetch by address, using stored blob IDs:', addressError);
+          // Use posts from storage
+          result = {
+            posts: postsFromStorage,
+            total: postsFromStorage.length,
+          };
+          
+          // Filter by mediaType if needed
+          if (mediaType) {
+            result.posts = result.posts.filter(p => p.mediaType === mediaType);
+            result.total = result.posts.length;
+          }
+        }
+      } else {
+        // No wallet connected, use stored blob IDs
+        result = {
+          posts: postsFromStorage,
+          total: postsFromStorage.length,
+        };
+        
+        // Filter by mediaType if needed
+        if (mediaType) {
+          result.posts = result.posts.filter(p => p.mediaType === mediaType);
+          result.total = result.posts.length;
+        }
+      }
+      
       console.log('[loadPosts] Posts fetched:', { 
         total: result.total, 
         postsCount: result.posts.length,
         posts: result.posts.map(p => ({ id: p.id, blobId: p.blobId, content: p.content?.substring(0, 50) }))
       });
+      
+      // HARDCODED TEST: Try to fetch a specific blob ID for testing
+      const testBlobId = 'M6goiHCUvhG6ExVffW69jhxVbFMBFZix4iFIA3alaag';
+      try {
+        console.log('[loadPosts] Testing hardcoded blob ID:', testBlobId);
+        const { readBlobFromWalrus } = await import('@/lib/utils/walrus');
+        const testBlobData = await readBlobFromWalrus(testBlobId, false);
+        console.log('[loadPosts] Hardcoded blob fetched successfully:', testBlobData);
+        
+        // Parse the blob data if it's JSON
+        let testPost: any = null;
+        if (typeof testBlobData === 'object' && testBlobData !== null) {
+          if (testBlobData.content && typeof testBlobData.content === 'string') {
+            // Check if content is binary/image data (starts with RIFF, PNG, etc.)
+            const contentStr = testBlobData.content;
+            if (contentStr.startsWith('RIFF') || contentStr.startsWith('\x89PNG') || contentStr.startsWith('GIF') || contentStr.startsWith('ÿØÿà')) {
+              // It's binary image data - create a post object with image URL
+              const aggregatorUrl = 'https://aggregator.walrus-testnet.walrus.space';
+              const imageUrl = `${aggregatorUrl}/v1/blobs/${testBlobId}`;
+              testPost = {
+                content: '',
+                mediaUrl: imageUrl,
+                mediaType: 'image',
+                author: 'Test User',
+                authorAddress: '0x0000000000000000000000000000000000000000',
+                timestamp: Date.now(),
+              };
+            } else {
+              // Try to parse as JSON
+              try {
+                testPost = JSON.parse(testBlobData.content);
+              } catch {
+                testPost = { content: testBlobData.content };
+              }
+            }
+          } else {
+            testPost = testBlobData;
+          }
+        } else {
+          testPost = { content: testBlobData };
+        }
+        
+        // Ensure required fields exist
+        if (testPost) {
+          const formattedTestPost = {
+            id: testBlobId,
+            blobId: testBlobId,
+            author: testPost.author || 'Unknown',
+            authorAddress: testPost.authorAddress || '0x0000000000000000000000000000000000000000',
+            content: testPost.content || '',
+            mediaUrl: testPost.mediaUrl || testPost.media_url,
+            mediaType: testPost.mediaType || testPost.media_type || 'image',
+            timestamp: testPost.timestamp || Date.now(),
+            ...testPost,
+          };
+          result.posts.unshift(formattedTestPost); // Add to beginning
+          result.total += 1;
+          console.log('[loadPosts] Added hardcoded test post:', formattedTestPost);
+        }
+      } catch (testError) {
+        console.error('[loadPosts] Failed to fetch hardcoded blob:', testError);
+      }
       
       setPosts(result.posts.map(post => ({
         ...post,
@@ -265,13 +457,25 @@ function DiscoverPageContent() {
     });
     console.log('[handleSubmitPost] Post uploaded:', postResult.blobId);
 
+    // Store blob IDs for this user
+    const { addUserBlobId } = await import('@/lib/utils/blob-storage');
+    addUserBlobId(currentAddress, postResult.blobId);
+    if (mediaBlobId) {
+      addUserBlobId(currentAddress, mediaBlobId);
+    }
+    console.log('[handleSubmitPost] Stored blob IDs for user:', { 
+      userAddress: currentAddress, 
+      postBlobId: postResult.blobId,
+      mediaBlobId: mediaBlobId || 'none'
+    });
+
     // Index the post on backend so it can be fetched
     // Use API_BASE_URL from constants (handles both NEXT_PUBLIC_API_BASE_URL and NEXT_PUBLIC_API_URL)
     const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 
                         process.env.NEXT_PUBLIC_API_URL || 
                         (typeof window !== 'undefined' && window.location.origin.includes('vercel.app') 
                           ? 'https://ox-backend.vercel.app' // Production backend URL
-                          : 'http://localhost:3000');
+                          : 'http://localhost:3001'); // Backend runs on port 3001
     try {
       console.log('[handleSubmitPost] Indexing post on backend...', { 
         API_BASE_URL, 
@@ -503,9 +707,10 @@ function DiscoverPageContent() {
       };
 
       // Index the post on backend
+      // Backend runs on port 3001 to avoid conflict with Next.js frontend (port 3000)
       const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 
                           process.env.NEXT_PUBLIC_API_URL || 
-                          'http://localhost:3000';
+                          'http://localhost:3001';
       await fetch(`${API_BASE_URL}/api/posts/index`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1067,7 +1272,7 @@ function DiscoverPageContent() {
                       {post.mediaType === "image" ? (
                         <Image
                           src={post.mediaBlobId 
-                            ? `${process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000'}/api/walrus/read/${post.mediaBlobId}?format=raw`
+                            ? `${process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001'}/api/walrus/read/${post.mediaBlobId}?format=raw`
                             : post.mediaUrl || ''
                           }
                           alt={post.content}
@@ -1078,7 +1283,7 @@ function DiscoverPageContent() {
                       ) : (
                         <video
                           src={post.mediaBlobId 
-                            ? `${process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000'}/api/walrus/read/${post.mediaBlobId}?format=raw`
+                            ? `${process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001'}/api/walrus/read/${post.mediaBlobId}?format=raw`
                             : post.mediaUrl || ''
                           }
                           controls
@@ -1092,10 +1297,10 @@ function DiscoverPageContent() {
                   <div className="p-4">
                     <div className="flex items-center gap-3 mb-3">
                       <div className="w-10 h-10 rounded-full bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center font-bold">
-                        {post.author[0]}
+                        {post.author?.[0] || '?'}
                       </div>
                       <div className="flex-1">
-                        <div className="font-semibold">{post.author}</div>
+                        <div className="font-semibold">{post.author || 'Unknown'}</div>
                         <div className="text-xs text-zinc-500">
                           {formatTimestamp(post.timestamp)}
                         </div>
