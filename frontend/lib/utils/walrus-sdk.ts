@@ -1233,20 +1233,20 @@ export function createWalrusFlow(
 }
 
 /**
- * Walrus HTTP API endpoints (bypasses SDK transaction building)
- * Based on: https://raw.githubusercontent.com/Akpahsamuel/NFT/main/frontend%2Fsrc%2Fservices%2Fwalrus.ts
+ * Walrus HTTP API - EXACT implementation from working NFT project
+ * Source: https://raw.githubusercontent.com/Akpahsamuel/NFT/main/frontend%2Fsrc%2Fservices%2Fwalrus.ts
  */
-// Walrus HTTP API endpoints
-// Primary publisher endpoint
-const WALRUS_PUBLISHER_URL = 'https://publisher.walrus-01.tududes.com';
-// Alternative publisher endpoints (if primary fails)
-const WALRUS_PUBLISHER_ALT1 = 'https://publisher.walrus-testnet.walrus.space';
-const WALRUS_PUBLISHER_ALT2 = 'https://wal-publisher-testnet.staketab.org';
 
+// Working Walrus testnet endpoints - Updated January 2025
+// Publisher: Tudor's endpoint with confirmed CORS support
+// Aggregator: Multiple fallback options
+const WALRUS_PUBLISHER_URL = 'https://publisher.walrus-01.tududes.com';
 const WALRUS_AGGREGATOR_URL = 'https://aggregator.walrus-testnet.walrus.space';
+
+// Backup endpoints in case primary fails
 const BACKUP_AGGREGATOR_URL = 'https://wal-aggregator-testnet.staketab.org';
 
-interface WalrusUploadResponse {
+export interface WalrusUploadResponse {
   newlyCreated?: {
     blobObject: {
       id: string;
@@ -1258,14 +1258,174 @@ interface WalrusUploadResponse {
   };
 }
 
+export interface WalrusBlob {
+  blobId: string;
+  walrusUrl: string;
+  originalUrl?: string;
+}
+
 /**
- * Upload data directly to Walrus using HTTP API (bypasses SDK transaction building)
- * This method avoids the coin selection issue by using direct HTTP upload
- * 
- * @param data - Data to store (string, Uint8Array, Blob, or File)
- * @param userAddress - User's Sui address to own the resulting blob object
- * @param options - Upload options
- * @returns Promise with blob ID and URL
+ * WalrusService - EXACT implementation from working NFT project
+ * Source: https://raw.githubusercontent.com/Akpahsamuel/NFT/main/frontend%2Fsrc%2Fservices%2Fwalrus.ts
+ */
+export class WalrusService {
+  /**
+   * Upload a file directly to Walrus
+   * @param file The file to upload
+   * @param userAddress The user's Sui address to own the resulting blob object
+   */
+  static async uploadFile(file: File, userAddress?: string): Promise<WalrusBlob> {
+    try {
+      // Convert file to raw binary data
+      const fileData = await file.arrayBuffer();
+      
+      // Construct URL with send_object_to parameter if userAddress is provided
+      let uploadUrl = `${WALRUS_PUBLISHER_URL}/v1/blobs?epochs=5`;
+      if (userAddress) {
+        uploadUrl += `&send_object_to=${userAddress}`;
+      }
+      
+      const response = await axios.put<WalrusUploadResponse>(
+        uploadUrl,
+        fileData,
+        {
+          headers: {
+            'Content-Type': 'application/octet-stream',
+          },
+          // Add timeout for large files
+          timeout: 60000, // 60 seconds
+        }
+      );
+
+      // Extract blob ID from response
+      const blobId = response.data.newlyCreated?.blobObject.blobId || 
+                    response.data.alreadyCertified?.blobId;
+      
+      if (!blobId) {
+        throw new Error('Failed to get blob ID from Walrus response');
+      }
+
+      return {
+        blobId,
+        walrusUrl: this.getBlobUrl(blobId),
+      };
+    } catch (error) {
+      console.error('Walrus upload failed:', error);
+      if (axios.isAxiosError(error)) {
+        // Check for specific error types
+        if (error.code === 'NETWORK_ERROR' || error.message === 'Network Error') {
+          throw new Error('Network error: Unable to connect to Walrus. Please check your internet connection and try again.');
+        }
+        if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+          throw new Error('Upload timeout: The file is too large or the connection is slow. Please try again.');
+        }
+        if (error.response?.status === 403) {
+          throw new Error('Access denied: CORS or authentication error. Please contact support.');
+        }
+        if (error.response?.status === 404) {
+          throw new Error('Service unavailable: Walrus endpoint not found. The service may be temporarily down.');
+        }
+        if (error.response && error.response.status >= 500) {
+          throw new Error('Server error: Walrus service is experiencing issues. Please try again later.');
+        }
+        
+        const message = error.response?.data?.message || error.message;
+        throw new Error(`Failed to upload to Walrus: ${message}`);
+      }
+      throw new Error(`Failed to upload to Walrus: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Upload JSON metadata to Walrus
+   * @param metadata The metadata object to upload
+   * @param userAddress The user's Sui address to own the resulting blob object
+   */
+  static async uploadMetadata(metadata: any, userAddress?: string): Promise<WalrusBlob> {
+    const jsonData = JSON.stringify(metadata, null, 2);
+    const encoder = new TextEncoder();
+    const binaryData = encoder.encode(jsonData);
+    
+    try {
+      // Construct URL with send_object_to parameter if userAddress is provided
+      let uploadUrl = `${WALRUS_PUBLISHER_URL}/v1/blobs?epochs=5`;
+      if (userAddress) {
+        uploadUrl += `&send_object_to=${userAddress}`;
+      }
+
+      const response = await axios.put<WalrusUploadResponse>(
+        uploadUrl,
+        binaryData,
+        {
+          headers: {
+            'Content-Type': 'application/octet-stream',
+          },
+          timeout: 60000,
+        }
+      );
+
+      const blobId = response.data.newlyCreated?.blobObject.blobId || 
+                    response.data.alreadyCertified?.blobId;
+      
+      if (!blobId) {
+        throw new Error('Failed to get blob ID from Walrus response');
+      }
+
+      return {
+        blobId,
+        walrusUrl: this.getBlobUrl(blobId),
+      };
+    } catch (error) {
+      console.error('Walrus metadata upload failed:', error);
+      if (axios.isAxiosError(error)) {
+        const message = error.response?.data?.message || error.message;
+        throw new Error(`Failed to upload metadata to Walrus: ${message}`);
+      }
+      throw new Error('Failed to upload metadata to Walrus');
+    }
+  }
+
+  /**
+   * Get the public URL for a Walrus blob
+   */
+  static getBlobUrl(blobId: string): string {
+    return `${WALRUS_AGGREGATOR_URL}/v1/blobs/${blobId}`;
+  }
+
+  /**
+   * Check if a blob is available (certified) for reading
+   */
+  static async checkBlobAvailability(blobId: string, maxRetries: number = 3, delayMs: number = 2000): Promise<boolean> {
+    const aggregatorUrls = [WALRUS_AGGREGATOR_URL, BACKUP_AGGREGATOR_URL];
+    
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      // Try both aggregator endpoints
+      for (const aggregatorUrl of aggregatorUrls) {
+        try {
+          const response = await axios.head(`${aggregatorUrl}/v1/blobs/${blobId}`, {
+            timeout: 5000,
+          });
+          if (response.status === 200) {
+            return true;
+          }
+        } catch (error) {
+          // Continue to next aggregator or retry
+          console.warn(`Failed to check blob availability on ${aggregatorUrl}:`, error);
+        }
+      }
+      
+      if (attempt < maxRetries - 1) {
+        // Wait before retrying
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      }
+    }
+    return false;
+  }
+}
+
+/**
+ * Wrapper function for backward compatibility
+ * Converts our data types to File/Blob and calls WalrusService
  */
 export async function storeBlobWithHttpApi(
   data: string | Uint8Array | Blob | File,
@@ -1275,110 +1435,33 @@ export async function storeBlobWithHttpApi(
     network?: 'testnet' | 'mainnet';
   } = {}
 ): Promise<{ blobId: string; walrusUrl: string }> {
-  try {
-    // Convert data to ArrayBuffer
-    let fileData: ArrayBuffer;
-    
-    if (data instanceof File || data instanceof Blob) {
-      fileData = await data.arrayBuffer();
-    } else if (data instanceof Uint8Array) {
-      // Convert Uint8Array to ArrayBuffer by creating a new buffer
-      fileData = new Uint8Array(data).buffer;
-    } else if (typeof data === 'string') {
-      const encoder = new TextEncoder();
-      const encoded = encoder.encode(data);
-      fileData = encoded.buffer;
-    } else {
-      throw new Error('Unsupported data type. Expected string, Uint8Array, Blob, or File.');
+  // Convert data to File/Blob format that WalrusService expects
+  if (data instanceof File) {
+    return await WalrusService.uploadFile(data, userAddress);
+  } else if (data instanceof Blob) {
+    // Convert Blob to File for WalrusService
+    const file = new File([data], 'blob', { type: data.type || 'application/octet-stream' });
+    return await WalrusService.uploadFile(file, userAddress);
+  } else if (data instanceof Uint8Array) {
+    // Convert Uint8Array to Blob then File
+    // Create a new Uint8Array to ensure we have a proper ArrayBuffer
+    const newArray = new Uint8Array(data);
+    const blob = new Blob([newArray], { type: 'application/octet-stream' });
+    const file = new File([blob], 'data', { type: 'application/octet-stream' });
+    return await WalrusService.uploadFile(file, userAddress);
+  } else if (typeof data === 'string') {
+    // Try to parse as JSON first
+    try {
+      const metadata = JSON.parse(data);
+      return await WalrusService.uploadMetadata(metadata, userAddress);
+    } catch {
+      // Not JSON, treat as plain text
+      const blob = new Blob([data], { type: 'text/plain' });
+      const file = new File([blob], 'text.txt', { type: 'text/plain' });
+      return await WalrusService.uploadFile(file, userAddress);
     }
-
-    // Construct upload URL - match the working NFT project implementation exactly
-    // They use epochs=5 and include send_object_to directly
-    // Default to epochs=5 (like the working NFT project)
-    // Shorter epochs may have different payment requirements or be free
-    const epochs = options.epochs || 5;
-    let uploadUrl = `${WALRUS_PUBLISHER_URL}/v1/blobs?epochs=${epochs}`;
-    if (userAddress) {
-      uploadUrl += `&send_object_to=${userAddress}`;
-    }
-
-    console.log('[storeBlobWithHttpApi] Uploading (matching working NFT project approach)...', {
-      url: uploadUrl,
-      epochs,
-      hasOwnership: !!userAddress,
-      dataSize: fileData.byteLength,
-    });
-
-    const response = await axios.put<WalrusUploadResponse>(
-      uploadUrl,
-      fileData,
-      {
-        headers: {
-          'Content-Type': 'application/octet-stream',
-        },
-        timeout: 60000, // 60 seconds
-      }
-    );
-
-    // Extract blob ID from response
-    const blobId = response.data.newlyCreated?.blobObject.blobId || 
-                  response.data.alreadyCertified?.blobId;
-    
-    if (!blobId) {
-      throw new Error('Failed to get blob ID from Walrus response');
-    }
-
-    const walrusUrl = `${WALRUS_AGGREGATOR_URL}/v1/blobs/${blobId}`;
-
-    console.log('[storeBlobWithHttpApi] Upload successful:', {
-      blobId,
-      walrusUrl,
-    });
-
-    return {
-      blobId,
-      walrusUrl,
-    };
-  } catch (error) {
-    console.error('[storeBlobWithHttpApi] Upload failed:', error);
-    if (axios.isAxiosError(error)) {
-      // Handle specific error types
-      if (error.code === 'NETWORK_ERROR' || error.message === 'Network Error') {
-        throw new Error('Network error: Unable to connect to Walrus. Please check your internet connection and try again.');
-      }
-      if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
-        throw new Error('Upload timeout: The file is too large or the connection is slow. Please try again.');
-      }
-      if (error.response?.status === 403) {
-        throw new Error('Access denied: CORS or authentication error. Please contact support.');
-      }
-      if (error.response?.status === 404) {
-        throw new Error('Service unavailable: Walrus endpoint not found. The service may be temporarily down.');
-      }
-      if (error.response && error.response.status >= 500) {
-        const errorMessage = error.response?.data?.error?.message || error.response?.data?.message;
-        if (errorMessage?.includes('WAL coins') || errorMessage?.includes('sufficient balance')) {
-          // This is a critical issue - Walrus backend cannot find WAL coins
-          // Even though the user has coins and RPC can see them
-          throw new Error(
-            `Walrus backend cannot find your WAL tokens: "${errorMessage}". ` +
-            `\n\nThis is a known issue with Walrus backend coin selection. ` +
-            `\n\nPossible solutions:` +
-            `\n1. Split your WAL coins: Send small amounts (0.1 WAL) to yourself to create multiple coin objects` +
-            `\n2. Wait and retry: Sometimes there's a timing issue with coin queries` +
-            `\n3. Check wallet: Ensure your WAL tokens aren't locked or frozen` +
-            `\n4. Contact Walrus support: This appears to be a backend issue` +
-            `\n\nYour address: ${userAddress || 'unknown'}` +
-            `\nError from: ${error.response?.data?.error?.domain || 'Walrus backend'}`
-          );
-        }
-        throw new Error(`Server error: Walrus service is experiencing issues (${errorMessage || '500 Internal Server Error'}). Please try again later.`);
-      }
-      
-      const message = error.response?.data?.error?.message || error.response?.data?.message || error.message;
-      throw new Error(`Failed to upload to Walrus: ${message}`);
-    }
-    throw new Error(`Failed to upload to Walrus: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  } else {
+    throw new Error('Unsupported data type. Expected string, Uint8Array, Blob, or File.');
   }
 }
 
