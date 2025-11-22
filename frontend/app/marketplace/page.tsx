@@ -5,6 +5,9 @@ import Link from 'next/link';
 import { mockAPI, type IPToken } from '@/lib/mocks/data';
 import { Header } from '@/components/shared/header';
 
+// Force dynamic rendering to avoid useSearchParams() prerendering issues
+export const dynamic = 'force-dynamic';
+
 function MarketplaceContent() {
   const [tokens, setTokens] = useState<IPToken[]>([]);
   const [loading, setLoading] = useState(true);
