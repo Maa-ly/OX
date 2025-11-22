@@ -2,12 +2,12 @@ import express from 'express';
 import multer from 'multer';
 import { logger } from '../utils/logger.js';
 import { WalrusService } from '../services/walrus.js';
-import { WalrusIndexerService } from '../services/walrus-indexer.js';
+import { WalrusIndexerService, getIndexerService } from '../services/walrus-indexer.js';
 import { blobStorage } from '../services/blob-storage.js';
 
 const router = express.Router();
 const walrusService = new WalrusService();
-const indexerService = new WalrusIndexerService();
+const indexerService = getIndexerService(); // Use singleton instance
 
 // Export indexerService so walrus.js can use the same instance
 export { indexerService };
@@ -211,8 +211,22 @@ router.get('/', async (req, res, next) => {
       offset: parseInt(offset),
     });
   } catch (error) {
-    logger.error('Error fetching posts:', error);
-    next(error);
+    logger.error('Error fetching posts:', {
+      error: error?.message,
+      stack: error?.stack,
+      name: error?.name,
+    });
+    
+    // Return error response instead of using next(error) to avoid 500
+    res.status(500).json({
+      success: false,
+      error: {
+        message: error?.message || 'Failed to fetch posts',
+        type: error?.name || 'UnknownError',
+      },
+      posts: [],
+      total: 0,
+    });
   }
 });
 

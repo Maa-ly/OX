@@ -213,3 +213,14 @@ export class WalrusIndexerService {
   }
 }
 
+// Export singleton instance to avoid creating multiple instances
+// This ensures all parts of the app use the same in-memory index
+let indexerServiceInstance: WalrusIndexerService | null = null;
+
+export function getIndexerService(): WalrusIndexerService {
+  if (!indexerServiceInstance) {
+    indexerServiceInstance = new WalrusIndexerService();
+  }
+  return indexerServiceInstance;
+}
+

@@ -581,20 +581,44 @@ export async function getPosts(options?: {
     if (options?.offset) params.append('offset', options.offset.toString());
 
     const url = `${API_BASE_URL}/api/posts${params.toString() ? `?${params.toString()}` : ''}`;
+    console.log('[getPosts] Fetching from:', url);
     const response = await fetch(url);
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Unknown error' }));
-      throw new Error(error.error || `Failed to fetch posts: ${response.statusText}`);
+      const errorText = await response.text();
+      let error;
+      try {
+        error = JSON.parse(errorText);
+      } catch {
+        error = { error: errorText || `HTTP ${response.status}: ${response.statusText}` };
+      }
+      console.error('[getPosts] Backend error:', {
+        status: response.status,
+        statusText: response.statusText,
+        error,
+        url,
+      });
+      throw new Error(error.error || error.message || `Failed to fetch posts: ${response.statusText}`);
     }
 
     const data = await response.json();
+    console.log('[getPosts] Response:', { 
+      success: data.success, 
+      total: data.total, 
+      postsCount: data.posts?.length,
+      hasPosts: !!data.posts && data.posts.length > 0,
+    });
     return {
       posts: data.posts || [],
       total: data.total || 0,
     };
-  } catch (error) {
-    console.error('Failed to fetch posts:', error);
+  } catch (error: any) {
+    console.error('[getPosts] Failed to fetch posts:', {
+      error,
+      message: error?.message,
+      name: error?.name,
+      stack: error?.stack,
+    });
     return { posts: [], total: 0 };
   }
 }

@@ -1380,33 +1380,28 @@ export class WalrusService {
         // Method 1: Check in-memory indexer first (for recently indexed posts)
         let indexedBlobIds = new Set();
         try {
-          // Import the indexer service instance from routes/posts.js to use the same instance
-          // This ensures we're using the same in-memory index that was populated during indexing
-          const postsModule = await import('../routes/posts.js');
-          const indexerService = postsModule.indexerService;
+          // Use singleton instance to avoid circular dependency
+          const { getIndexerService } = await import('./walrus-indexer.js');
+          const indexerService = getIndexerService();
           
-          if (indexerService) {
-            const indexedPosts = await indexerService.queryContributionsByIP('all', {});
-            
-            if (indexedPosts && indexedPosts.length > 0) {
-              logger.info(`Found ${indexedPosts.length} posts from in-memory index`);
-              // Add indexed posts directly
-              for (const post of indexedPosts) {
-                const blobId = post.blobId || post.id;
-                if (blobId) {
-                  indexedBlobIds.add(blobId);
-                  allPosts.push({
-                    id: blobId,
-                    blobId,
-                    ...post,
-                  });
-                }
+          const indexedPosts = await indexerService.queryContributionsByIP('all', {});
+          
+          if (indexedPosts && indexedPosts.length > 0) {
+            logger.info(`Found ${indexedPosts.length} posts from in-memory index`);
+            // Add indexed posts directly
+            for (const post of indexedPosts) {
+              const blobId = post.blobId || post.id;
+              if (blobId) {
+                indexedBlobIds.add(blobId);
+                allPosts.push({
+                  id: blobId,
+                  blobId,
+                  ...post,
+                });
               }
-            } else {
-              logger.info('In-memory indexer is empty (no posts indexed yet)');
             }
           } else {
-            logger.warn('indexerService not found in posts module');
+            logger.info('In-memory indexer is empty (no posts indexed yet)');
           }
         } catch (indexerError) {
           logger.warn('In-memory indexer not available:', indexerError.message);
