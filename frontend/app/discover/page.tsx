@@ -858,8 +858,7 @@ function DiscoverPageContent() {
                           });
                           setSuccessModal({ 
                             open: true, 
-                            message: result.message,
-                            details: `Transaction: ${result.digest.slice(0, 10)}...`
+                            message: `${result.message}\nTransaction: ${result.digest.slice(0, 10)}...`
                           });
                           // Reload balance after splitting
                           setTimeout(() => {
