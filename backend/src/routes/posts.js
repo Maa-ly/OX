@@ -48,49 +48,43 @@ router.post('/index', async (req, res, next) => {
 
     logger.info(`Indexing post for IP tokens: ${ipTokenIds.join(', ')}, blobId: ${blobId}`);
 
-    // Store blob ID and full Walrus response persistently (survives server restarts)
-    // This stores all the information from Walrus: blobId, objectId, epochs, cost, etc.
-    const metadata = walrusResponse ? {
-      walrusResponse,
-      blobId,
-      postType: post?.post_type || 'discover_post',
-      authorAddress: post?.authorAddress,
-      timestamp: post?.timestamp || Date.now(),
-      indexedAt: Date.now(),
-    } : {
-      blobId,
-      postType: post?.post_type || 'discover_post',
-      authorAddress: post?.authorAddress,
-      timestamp: post?.timestamp || Date.now(),
-      indexedAt: Date.now(),
-    };
-    
-    await blobStorage.addBlobId(blobId, metadata);
-    logger.info(`Stored blob ID and metadata persistently: ${blobId}`, {
+    // No need to store blob IDs separately - Walrus IS the database!
+    // The blob is already stored on Walrus/Sui, and we can query it directly.
+    // We only index it in-memory for faster queries (optional optimization).
+    logger.info(`Post uploaded to Walrus: ${blobId}`, {
       hasFullResponse: !!walrusResponse,
       objectId: walrusResponse?.newlyCreated?.blobObject?.id,
+      authorAddress: post?.authorAddress,
     });
 
     // Index the post for each IP token (already stored on Walrus by user)
     // This makes the post visible to everyone when they query posts
     for (const ipTokenId of ipTokenIds) {
-      await indexerService.indexContribution(
-        ipTokenId,
-        blobId,
-        {
-          post_type: 'discover_post',
-          engagement_type: 'post',
-          mediaType: post.mediaType || 'text',
-          timestamp: post.timestamp || Date.now(),
-          authorAddress: post.authorAddress,
-          ...post,
-        }
-      );
-      logger.info(`Indexed post ${blobId} for token ${ipTokenId}`);
+      try {
+        await indexerService.indexContribution(
+          ipTokenId,
+          blobId,
+          {
+            post_type: 'discover_post',
+            engagement_type: 'post',
+            mediaType: post?.mediaType || 'text',
+            timestamp: post?.timestamp || Date.now(),
+            authorAddress: post?.authorAddress,
+            ...post,
+          }
+        );
+        logger.info(`Indexed post ${blobId} for token ${ipTokenId}`);
+      } catch (indexError) {
+        // Log but don't fail - post is still stored on Walrus
+        logger.warn(`Failed to index post ${blobId} for token ${ipTokenId}:`, {
+          error: indexError?.message,
+          stack: indexError?.stack,
+        });
+      }
     }
 
     // Log index state for debugging
-    logger.info(`Post indexed successfully. Total blob IDs stored: ${blobStorage.getCount()}`);
+    logger.info(`Post indexed successfully. In-memory index now has posts for: ${ipTokenIds.join(', ')}`);
 
     res.json({
       success: true,
@@ -106,8 +100,23 @@ router.post('/index', async (req, res, next) => {
       },
     });
   } catch (error) {
-    logger.error('Error indexing post:', error);
-    next(error);
+    logger.error('Error indexing post:', {
+      error: error?.message,
+      stack: error?.stack,
+      name: error?.name,
+      code: error?.code,
+      blobId: req.body?.blobId,
+    });
+    
+    // Return a proper error response instead of using next(error) to avoid 500
+    res.status(500).json({
+      success: false,
+      error: {
+        message: error?.message || 'Failed to index post',
+        type: error?.name || 'UnknownError',
+        code: error?.code,
+      },
+    });
   }
 });
 

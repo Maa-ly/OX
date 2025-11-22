@@ -4,57 +4,126 @@ import { join } from 'path';
 import { logger } from '../utils/logger.js';
 
 /**
- * Simple file-based storage for blob IDs
- * Stores all blob IDs in a JSON file so they persist across server restarts
+ * Storage service for blob IDs
+ * 
+ * Supports multiple storage backends:
+ * 1. Vercel KV (Redis) - for production/serverless (recommended)
+ * 2. File system - for local development
+ * 3. In-memory only - fallback if both fail
  */
 export class BlobStorageService {
   constructor() {
-    // Store blob IDs in a JSON file
-    const dataDir = join(process.cwd(), 'data');
-    this.blobIdsFile = join(dataDir, 'blob-ids.json');
-    this.blobMetadataFile = join(dataDir, 'blob-metadata.json');
     this.blobIds = new Set(); // In-memory cache
     this.blobMetadata = new Map(); // blobId -> full metadata
+    this.useKv = false;
+    this.kv = null;
     
-    // Ensure data directory exists
-    this.ensureDataDir();
+    // Try to initialize Vercel KV (for production/serverless)
+    this.initKv();
     
-    // Load existing blob IDs on startup
-    this.loadBlobIds();
-  }
-
-  async ensureDataDir() {
-    const dataDir = join(process.cwd(), 'data');
-    if (!existsSync(dataDir)) {
-      await mkdir(dataDir, { recursive: true });
-      logger.info(`Created data directory: ${dataDir}`);
+    // If KV not available, use file system (for local development)
+    if (!this.useKv) {
+      const dataDir = join(process.cwd(), 'data');
+      this.blobIdsFile = join(dataDir, 'blob-ids.json');
+      this.blobMetadataFile = join(dataDir, 'blob-metadata.json');
+      this.ensureDataDir();
+      this.loadBlobIds();
+    } else {
+      // Load from KV on startup
+      this.loadBlobIds();
     }
   }
 
   /**
-   * Load blob IDs and metadata from files
+   * Initialize Vercel KV if available
+   */
+  async initKv() {
+    try {
+      // Try to import @vercel/kv
+      const kvModule = await import('@vercel/kv').catch(() => null);
+      if (kvModule && process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) {
+        this.kv = kvModule.kv({
+          url: process.env.KV_REST_API_URL,
+          token: process.env.KV_REST_API_TOKEN,
+        });
+        this.useKv = true;
+        logger.info('Using Vercel KV for blob storage (production mode)');
+        return;
+      }
+    } catch (error) {
+      logger.debug('Vercel KV not available, using file system:', error.message);
+    }
+    
+    // Check if we're on Vercel but KV not configured
+    if (process.env.VERCEL && !this.useKv) {
+      logger.warn('Running on Vercel but KV not configured. Blob IDs will be stored in memory only.');
+      logger.warn('To enable persistent storage, add KV_REST_API_URL and KV_REST_API_TOKEN environment variables.');
+    }
+  }
+
+  async ensureDataDir() {
+    try {
+      const dataDir = join(process.cwd(), 'data');
+      if (!existsSync(dataDir)) {
+        await mkdir(dataDir, { recursive: true });
+        logger.info(`Created data directory: ${dataDir}`);
+      }
+    } catch (error) {
+      // On Vercel/serverless, file system is read-only - use /tmp as fallback
+      if (error.code === 'EROFS' || error.code === 'EACCES') {
+        const tmpDir = '/tmp/data';
+        if (!existsSync(tmpDir)) {
+          await mkdir(tmpDir, { recursive: true });
+          logger.info(`Using /tmp/data directory (read-only filesystem detected)`);
+        }
+        this.blobIdsFile = join(tmpDir, 'blob-ids.json');
+        this.blobMetadataFile = join(tmpDir, 'blob-metadata.json');
+      } else {
+        throw error;
+      }
+    }
+  }
+
+  /**
+   * Load blob IDs and metadata from storage (KV or file)
    */
   async loadBlobIds() {
     try {
-      // Load blob IDs
-      if (existsSync(this.blobIdsFile)) {
-        const data = await readFile(this.blobIdsFile, 'utf-8');
-        const blobIdsArray = JSON.parse(data);
-        this.blobIds = new Set(blobIdsArray);
-        logger.info(`Loaded ${this.blobIds.size} blob IDs from storage`);
+      if (this.useKv && this.kv) {
+        // Load from Vercel KV
+        try {
+          const blobIdsArray = await this.kv.get('blob-ids') || [];
+          this.blobIds = new Set(blobIdsArray);
+          
+          const metadataObj = await this.kv.get('blob-metadata') || {};
+          this.blobMetadata = new Map(Object.entries(metadataObj));
+          
+          logger.info(`Loaded ${this.blobIds.size} blob IDs from KV storage`);
+        } catch (kvError) {
+          logger.warn('Failed to load from KV, starting fresh:', kvError.message);
+          this.blobIds = new Set();
+          this.blobMetadata = new Map();
+        }
       } else {
-        logger.info('No existing blob IDs file found, starting fresh');
-        this.blobIds = new Set();
-      }
+        // Load from file system
+        if (existsSync(this.blobIdsFile)) {
+          const data = await readFile(this.blobIdsFile, 'utf-8');
+          const blobIdsArray = JSON.parse(data);
+          this.blobIds = new Set(blobIdsArray);
+          logger.info(`Loaded ${this.blobIds.size} blob IDs from file storage`);
+        } else {
+          logger.info('No existing blob IDs file found, starting fresh');
+          this.blobIds = new Set();
+        }
 
-      // Load metadata
-      if (existsSync(this.blobMetadataFile)) {
-        const metadataData = await readFile(this.blobMetadataFile, 'utf-8');
-        const metadataObj = JSON.parse(metadataData);
-        this.blobMetadata = new Map(Object.entries(metadataObj));
-        logger.info(`Loaded metadata for ${this.blobMetadata.size} blobs`);
-      } else {
-        this.blobMetadata = new Map();
+        if (existsSync(this.blobMetadataFile)) {
+          const metadataData = await readFile(this.blobMetadataFile, 'utf-8');
+          const metadataObj = JSON.parse(metadataData);
+          this.blobMetadata = new Map(Object.entries(metadataObj));
+          logger.info(`Loaded metadata for ${this.blobMetadata.size} blobs`);
+        } else {
+          this.blobMetadata = new Map();
+        }
       }
     } catch (error) {
       logger.error('Error loading blob IDs:', error);
@@ -64,24 +133,46 @@ export class BlobStorageService {
   }
 
   /**
-   * Save blob IDs and metadata to files
+   * Save blob IDs and metadata to storage (KV or file)
    */
   async saveBlobIds() {
     try {
-      await this.ensureDataDir();
-      
-      // Save blob IDs
-      const blobIdsArray = Array.from(this.blobIds);
-      await writeFile(this.blobIdsFile, JSON.stringify(blobIdsArray, null, 2), 'utf-8');
-      logger.debug(`Saved ${blobIdsArray.length} blob IDs to storage`);
-      
-      // Save metadata
-      const metadataObj = Object.fromEntries(this.blobMetadata);
-      await writeFile(this.blobMetadataFile, JSON.stringify(metadataObj, null, 2), 'utf-8');
-      logger.debug(`Saved metadata for ${this.blobMetadata.size} blobs`);
+      if (this.useKv && this.kv) {
+        // Save to Vercel KV
+        const blobIdsArray = Array.from(this.blobIds);
+        const metadataObj = Object.fromEntries(this.blobMetadata);
+        
+        await Promise.all([
+          this.kv.set('blob-ids', blobIdsArray),
+          this.kv.set('blob-metadata', metadataObj),
+        ]);
+        
+        logger.debug(`Saved ${blobIdsArray.length} blob IDs to KV storage`);
+      } else {
+        // Save to file system
+        await this.ensureDataDir();
+        
+        const blobIdsArray = Array.from(this.blobIds);
+        await writeFile(this.blobIdsFile, JSON.stringify(blobIdsArray, null, 2), 'utf-8');
+        logger.debug(`Saved ${blobIdsArray.length} blob IDs to file storage`);
+        
+        const metadataObj = Object.fromEntries(this.blobMetadata);
+        await writeFile(this.blobMetadataFile, JSON.stringify(metadataObj, null, 2), 'utf-8');
+        logger.debug(`Saved metadata for ${this.blobMetadata.size} blobs`);
+      }
     } catch (error) {
+      // On Vercel/serverless without KV, file system is read-only - keep data in memory only
+      if (error.code === 'EROFS' || error.code === 'EACCES' || error.message?.includes('read-only')) {
+        logger.warn('File system is read-only (serverless environment). Blob IDs will be stored in memory only.', {
+          error: error.message,
+          code: error.code,
+          suggestion: 'Configure Vercel KV for persistent storage',
+        });
+        // Don't throw - allow in-memory storage to continue
+        return;
+      }
       logger.error('Error saving blob IDs:', error);
-      throw error;
+      // Don't throw - allow operation to continue with in-memory storage
     }
   }
 
@@ -107,8 +198,19 @@ export class BlobStorageService {
         });
       }
       
-      await this.saveBlobIds();
-      logger.info(`Added blob ID to storage: ${blobId}`, metadata);
+      // Try to save to file, but don't fail if it doesn't work (e.g., on Vercel)
+      try {
+        await this.saveBlobIds();
+        logger.info(`Added blob ID to storage: ${blobId}`, metadata);
+      } catch (saveError) {
+        // File save failed (likely read-only filesystem on Vercel)
+        // Continue with in-memory storage only
+        logger.warn(`Failed to save blob ID to file (using in-memory storage): ${saveError.message}`, {
+          blobId,
+          error: saveError?.code,
+        });
+        logger.info(`Added blob ID to in-memory storage: ${blobId}`);
+      }
     } else {
       logger.debug(`Blob ID already exists: ${blobId}`);
     }

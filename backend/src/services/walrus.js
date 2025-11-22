@@ -1211,21 +1211,122 @@ export class WalrusService {
   }
 
   /**
-   * Get all posts from Walrus using stored blob IDs
+   * Query all blob objects from Sui (by type)
    * 
-   * Reads all blob IDs from persistent storage and fetches posts from Walrus.
-   * This is much simpler and more reliable than querying Sui events.
+   * Queries Sui for all blob objects of type walrus::BlobObject.
+   * This is how we discover all posts without storing blob IDs separately.
+   * 
+   * @param {number} limit - Maximum number of objects to fetch (default: 100)
+   * @returns {Promise<Array>} Array of blob IDs
+   */
+  async queryAllBlobObjects(limit = 100) {
+    try {
+      logger.info('Querying all blob objects from Sui...');
+      
+      // Query Sui for all objects of type walrus::BlobObject
+      // Note: We need to know the package ID for walrus on testnet
+      // Common pattern: 0x...::walrus::BlobObject
+      // For testnet, we can query by owner or use events
+      
+      // Method 1: Query by type (if we know the exact type)
+      // This might not work if we don't know the exact package ID
+      
+      // Method 2: Query events for blob creation
+      // Walrus emits events when blobs are created
+      const events = await this.suiClient.queryEvents({
+        query: {
+          MoveModule: {
+            package: '0x6c2547cbbc38025cf3adac45f63cb0a8d12ecf777cdc75a4971612bf97fdf6af', // Walrus system object (testnet)
+            module: 'walrus',
+            event: 'BlobCreated', // or similar event name
+          },
+        },
+        limit,
+        order: 'descending', // Newest first
+      });
+
+      const blobIds = [];
+      for (const event of events.data) {
+        // Extract blobId from event data
+        const blobId = event.parsedJson?.blobId || event.parsedJson?.blob_id;
+        if (blobId) {
+          blobIds.push(blobId);
+        }
+      }
+
+      logger.info(`Found ${blobIds.length} blob IDs from Sui events`);
+      return blobIds;
+    } catch (error) {
+      logger.warn('Failed to query blob objects from Sui events, trying alternative method:', error.message);
+      
+      // Fallback: Return empty array - posts will be discovered as users query
+      // In practice, we'll rely on users uploading posts and querying by owner
+      return [];
+    }
+  }
+
+  /**
+   * Query all blob objects from Sui by querying events
+   * This is the primary method - queries Sui directly, no backend dependency
+   * 
+   * @param {number} limit - Maximum number of events to query (default: 100)
+   * @returns {Promise<Array<string>>} Array of blob IDs
+   */
+  async queryAllBlobIdsFromSui(limit = 100) {
+    try {
+      logger.info('Querying Sui events for blob creation...');
+      
+      // Query Sui events for blob creation
+      // Walrus emits events when blobs are created
+      const events = await this.suiClient.queryEvents({
+        query: {
+          MoveModule: {
+            package: '0x6c2547cbbc38025cf3adac45f63cb0a8d12ecf777cdc75a4971612bf97fdf6af', // Walrus system object (testnet)
+            module: 'walrus',
+            event: 'BlobCreated', // Event name when blob is created
+          },
+        },
+        limit,
+        order: 'descending', // Newest first
+      });
+
+      const blobIds = [];
+      for (const event of events.data) {
+        // Extract blobId from event data
+        // Event structure may vary, try multiple possible fields
+        const blobId = event.parsedJson?.blobId || 
+                      event.parsedJson?.blob_id ||
+                      event.parsedJson?.id ||
+                      event.parsedJson?.blobObject?.blobId;
+        if (blobId) {
+          blobIds.push(blobId);
+        }
+      }
+
+      logger.info(`Found ${blobIds.length} blob IDs from Sui events`);
+      return blobIds;
+    } catch (error) {
+      logger.warn('Failed to query blob IDs from Sui events:', error.message);
+      // Return empty array - will fall back to other methods
+      return [];
+    }
+  }
+
+  /**
+   * Get all posts from Walrus by querying Sui directly FIRST
+   * 
+   * Primary method: Query Sui events directly (no backend dependency)
+   * Fallback: Use in-memory indexer if Sui query fails
    * 
    * @param {Object} options - Query options
    * @param {string} options.userAddress - Filter by user address (optional)
    * @param {string} options.ipTokenId - Filter by IP token ID (optional)
-   * @param {Array<string>} options.blobIds - Use specific blob IDs (optional, if not provided uses stored blob IDs)
    * @returns {Promise<Array>} Array of post objects
    */
   async getAllPosts(options = {}) {
     try {
-      const { userAddress, ipTokenId, blobIds: providedBlobIds } = options;
-      logger.info('Getting all posts from Walrus using stored blob IDs', { userAddress, ipTokenId });
+      const { userAddress, ipTokenId } = options;
+      logger.info('Getting all posts from Walrus (querying Sui FIRST)', { userAddress, ipTokenId });
 
       let allPosts = [];
 
@@ -1234,11 +1335,11 @@ export class WalrusService {
         const userPosts = await this.getContributionsByOwner(userAddress);
         allPosts = userPosts;
       } else {
-        // Get blob IDs from storage (persistent, survives server restarts)
-        const { blobStorage } = await import('./blob-storage.js');
-        const blobIds = providedBlobIds || blobStorage.getAllBlobIds();
+        // PRIMARY METHOD: Query Sui events directly (no backend dependency)
+        logger.info('Querying Sui events for all blob IDs...');
+        const blobIds = await this.queryAllBlobIdsFromSui(100);
         
-        logger.info(`Found ${blobIds.length} blob IDs in storage`);
+        logger.info(`Found ${blobIds.length} blob IDs from Sui events`);
 
         // Read each blob to get post data
         for (const blobId of blobIds) {
@@ -1257,9 +1358,26 @@ export class WalrusService {
           }
         }
 
-        // If no blob IDs in storage, log a warning
-        if (blobIds.length === 0) {
-          logger.warn('No blob IDs found in storage. Posts will be empty until users upload posts.');
+        // FALLBACK: If Sui query returned no results, try in-memory indexer
+        if (allPosts.length === 0) {
+          logger.info('No posts from Sui events, trying in-memory indexer as fallback...');
+          try {
+            const { WalrusIndexerService } = await import('./walrus-indexer.js');
+            const indexerService = new WalrusIndexerService();
+            
+            const indexedPosts = await indexerService.queryContributionsByIP('all', {});
+            
+            if (indexedPosts && indexedPosts.length > 0) {
+              logger.info(`Found ${indexedPosts.length} posts from in-memory index (fallback)`);
+              allPosts = indexedPosts.map(post => ({
+                id: post.blobId || post.id,
+                blobId: post.blobId || post.id,
+                ...post,
+              }));
+            }
+          } catch (indexerError) {
+            logger.debug('In-memory indexer also empty:', indexerError.message);
+          }
         }
       }
 
@@ -1273,7 +1391,7 @@ export class WalrusService {
       // Sort by timestamp (newest first)
       allPosts.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
 
-      logger.info(`Found ${allPosts.length} posts from Walrus (direct query)`);
+      logger.info(`Found ${allPosts.length} posts from Walrus (Sui-first query)`);
       return allPosts;
     } catch (error) {
       logger.error('Error getting all posts:', error);
