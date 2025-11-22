@@ -174,11 +174,12 @@ async function signAndExecuteTransaction({
     walBalance = BigInt(balance.totalBalance);
     
     // Get coin objects to verify they're accessible
+    // Note: getAllCoins doesn't accept coinType parameter, so we get all coins and filter
     const allCoins = await suiClient.getAllCoins({
       owner: walletAddress,
-      coinType: WAL_COIN_TYPE,
     });
-    walCoins = allCoins.data;
+    // Filter for WAL coins specifically
+    walCoins = allCoins.data.filter(c => c.coinType === WAL_COIN_TYPE || c.coinType.includes('wal::WAL'));
     
     const requiredWALFormatted = estimatedCostMist 
       ? (Number(estimatedCostMist) / 1e9).toFixed(6)
