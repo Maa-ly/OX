@@ -989,6 +989,10 @@ export function createWalrusFlow(
     throw new Error('Cannot get wallet address - wallet not connected');
   }
 
+  // Calculate estimated cost for logging and error messages
+  const blobSize = blob.length;
+  const costEstimate = estimateWalrusCost(blobSize, epochs);
+
   // Create WalrusFile and initialize the flow
   const file = WalrusFile.from({
     contents: blob,
@@ -1069,6 +1073,7 @@ export function createWalrusFlow(
         transaction,
         wallet,
         network,
+        estimatedCostMist: costEstimate.estimatedCostMist,
       });
     },
   };
