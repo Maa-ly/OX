@@ -258,9 +258,20 @@ function DiscoverPageContent() {
     console.log('[handleSubmitPost] Post uploaded:', postResult.blobId);
 
     // Index the post on backend so it can be fetched
-    const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+    // Use API_BASE_URL from constants (handles both NEXT_PUBLIC_API_BASE_URL and NEXT_PUBLIC_API_URL)
+    const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 
+                        process.env.NEXT_PUBLIC_API_URL || 
+                        (typeof window !== 'undefined' && window.location.origin.includes('vercel.app') 
+                          ? 'https://ox-backend.vercel.app' // Production backend URL
+                          : 'http://localhost:3000');
     try {
-      console.log('[handleSubmitPost] Indexing post on backend...');
+      console.log('[handleSubmitPost] Indexing post on backend...', { 
+        API_BASE_URL, 
+        env: {
+          API_BASE_URL: process.env.NEXT_PUBLIC_API_BASE_URL,
+          API_URL: process.env.NEXT_PUBLIC_API_URL,
+        }
+      });
       const indexResponse = await fetch(`${API_BASE_URL}/api/posts/index`, {
         method: 'POST',
         headers: {
@@ -282,15 +293,36 @@ function DiscoverPageContent() {
       });
 
       if (!indexResponse.ok) {
-        const error = await indexResponse.json().catch(() => ({ error: 'Unknown error' }));
-        console.warn('[handleSubmitPost] Backend indexing failed:', error);
+        const errorText = await indexResponse.text();
+        let error;
+        try {
+          error = JSON.parse(errorText);
+        } catch {
+          error = { error: errorText || `HTTP ${indexResponse.status}: ${indexResponse.statusText}` };
+        }
+        console.error('[handleSubmitPost] Backend indexing failed:', {
+          status: indexResponse.status,
+          statusText: indexResponse.statusText,
+          error,
+          url: `${API_BASE_URL}/api/posts/index`,
+        });
         // Don't throw - post was uploaded successfully, just indexing failed
       } else {
-        console.log('[handleSubmitPost] Post indexed successfully');
+        const result = await indexResponse.json();
+        console.log('[handleSubmitPost] Post indexed successfully:', result);
       }
-    } catch (indexError) {
-      console.warn('[handleSubmitPost] Error indexing post:', indexError);
-      // Don't throw - post was uploaded successfully
+    } catch (indexError: any) {
+      console.error('[handleSubmitPost] Error indexing post:', {
+        error: indexError,
+        message: indexError?.message,
+        name: indexError?.name,
+        cause: indexError?.cause,
+        API_BASE_URL,
+        blobId: postResult.blobId,
+        note: 'Post was uploaded to Walrus successfully, but backend indexing failed. The post can be manually indexed later.',
+      });
+      // Don't throw - post was uploaded successfully, just indexing failed
+      // The post is still on Walrus and can be manually indexed later
     }
 
     // Reload posts to show the new post
@@ -463,7 +495,9 @@ function DiscoverPageContent() {
       };
 
       // Index the post on backend
-      const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+      const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 
+                          process.env.NEXT_PUBLIC_API_URL || 
+                          'http://localhost:3000';
       await fetch(`${API_BASE_URL}/api/posts/index`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
