@@ -10,28 +10,14 @@ use serde_json::json;
 use std::fmt;
 
 mod apps {
-    #[cfg(feature = "twitter-example")]
-    #[path = "twitter-example/mod.rs"]
-    pub mod twitter_example;
-
-    #[cfg(feature = "weather-example")]
-    #[path = "weather-example/mod.rs"]
-    pub mod weather_example;
-
-    #[cfg(feature = "seal-example")]
-    #[path = "seal-example/mod.rs"]
-    pub mod seal_example;
+    // Integrated, single app: MyAnimeList processing
+    #[path = "myanimelist/mod.rs"]
+    pub mod myanimelist;
 }
 
 pub mod app {
-    #[cfg(feature = "twitter-example")]
-    pub use crate::apps::twitter_example::*;
-
-    #[cfg(feature = "weather-example")]
-    pub use crate::apps::weather_example::*;
-
-    #[cfg(feature = "seal-example")]
-    pub use crate::apps::seal_example::*;
+    // Re-export the integrated MyAnimeList handler as `app::process_data`
+    pub use crate::apps::myanimelist::*;
 }
 
 pub mod common;
