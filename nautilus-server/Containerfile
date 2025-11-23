@@ -55,7 +55,11 @@ WORKDIR /src/nautilus-server
 ENV OPENSSL_STATIC=true
 ENV TARGET=x86_64-unknown-linux-musl
 ARG ENCLAVE_APP
+ARG MAL_CLIENT_ID
+ARG MAL_BEARER_TOKEN
 ENV RUSTFLAGS="-C target-feature=+crt-static -C relocation-model=static"
+ENV MAL_CLIENT_ID=${MAL_CLIENT_ID}
+ENV MAL_BEARER_TOKEN=${MAL_BEARER_TOKEN}
 RUN cargo build --locked --no-default-features --features $ENCLAVE_APP --release --target "$TARGET"
 
 WORKDIR /build_cpio

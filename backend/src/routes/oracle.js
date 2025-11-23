@@ -260,12 +260,13 @@ router.get('/metrics/:ipTokenId', async (req, res, next) => {
 });
 
 // Update metrics on-chain
-// Combines Walrus + Nautilus data before updating
+// Combines Walrus + Nautilus + Oracle metrics (Reddit, Instagram, oracle-metrics) before updating
 router.post('/update/:ipTokenId', async (req, res, next) => {
   const startTime = Date.now();
   try {
     const { ipTokenId } = req.params;
     const { force, includeExternal = 'true', name } = req.query;
+    const { oracleMetrics } = req.body || {}; // Oracle metrics from oracle service (Reddit, Instagram, oracle-metrics)
 
     logger.info(`Updating on-chain metrics for IP token: ${ipTokenId} (includeExternal: ${includeExternal})`);
 
@@ -292,8 +293,8 @@ router.post('/update/:ipTokenId', async (req, res, next) => {
       }
     }
 
-    // 5. Combine Walrus + Nautilus metrics
-    const combinedMetrics = aggregationService.combineMetrics(walrusMetrics, nautilusMetrics);
+    // 5. Combine Walrus + Nautilus + Oracle metrics
+    const combinedMetrics = aggregationService.combineMetrics(walrusMetrics, nautilusMetrics, oracleMetrics);
 
     // 6. Update on-chain with combined metrics
     // Note: Smart contract will verify Nautilus signatures on-chain
@@ -317,6 +318,11 @@ router.post('/update/:ipTokenId', async (req, res, next) => {
         },
         nautilus: {
           sources: nautilusMetrics.length,
+        },
+        oracle: {
+          reddit: oracleMetrics?.reddit?.posts?.length || 0,
+          instagram: oracleMetrics?.instagram?.posts?.length || 0,
+          projectMetrics: oracleMetrics?.projectMetrics ? 1 : 0,
         },
       },
     });

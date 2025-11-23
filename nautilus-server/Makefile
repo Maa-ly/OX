@@ -15,6 +15,8 @@ out/nitro.eif: $(shell git ls-files src) | out
 		--output type=local,rewrite-timestamp=true,dest=out\
 		-f Containerfile \
 		--build-arg ENCLAVE_APP=$(ENCLAVE_APP) \
+		--build-arg MAL_CLIENT_ID=$(MAL_CLIENT_ID) \
+		--build-arg MAL_BEARER_TOKEN=$(MAL_BEARER_TOKEN) \
 		.
 
 .PHONY: run
