@@ -105,29 +105,30 @@ function DiscoverPageContent() {
       
       console.log('[loadPosts] Fetching posts...', { mediaType, limit: 1000, walletAddress });
       
-      // Get stored blob IDs from localStorage
-      const { getAllBlobIds, getUserBlobIds } = await import('@/lib/utils/blob-storage');
-      const { readBlobFromWalrus } = await import('@/lib/utils/walrus');
-      
-      let storedBlobIds: string[] = [];
-      if (walletAddress) {
-        // Get blob IDs for the connected wallet
-        storedBlobIds = getUserBlobIds(walletAddress);
-        console.log('[loadPosts] Found stored blob IDs for user:', { 
-          userAddress: walletAddress, 
-          blobIds: storedBlobIds.length 
-        });
-      } else {
-        // Get all blob IDs from all users
-        storedBlobIds = getAllBlobIds();
-        console.log('[loadPosts] Found stored blob IDs from all users:', storedBlobIds.length);
+      // Fetch all blobs from the contract
+      let contractBlobs: Array<{ blobId: string; text: string | null; timestamp: number }> = [];
+      try {
+        const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001';
+        const response = await fetch(`${API_BASE}/api/contract/blobs`);
+        if (response.ok) {
+          const data = await response.json();
+          contractBlobs = data.blobs || [];
+          console.log('[loadPosts] Fetched blobs from contract:', contractBlobs.length);
+        } else {
+          console.warn('[loadPosts] Failed to fetch blobs from contract:', response.statusText);
+        }
+      } catch (error) {
+        console.warn('[loadPosts] Error fetching blobs from contract:', error);
       }
       
-      // Fetch posts from stored blob IDs
+      const { readBlobFromWalrus } = await import('@/lib/utils/walrus');
+      
+      // Fetch posts from contract blobs only
       const postsFromStorage: Post[] = [];
-      for (const blobId of storedBlobIds) {
+      
+      for (const contractBlob of contractBlobs) {
         try {
-          const blobData = await readBlobFromWalrus(blobId, false);
+          const blobData = await readBlobFromWalrus(contractBlob.blobId, false);
           
           // Parse blob data
           let postData: any = null;
@@ -139,28 +140,41 @@ function DiscoverPageContent() {
                   contentStr.startsWith('GIF') || contentStr.startsWith('ÿØÿà')) {
                 // It's binary image data - create a post object with image URL
                 const aggregatorUrl = 'https://aggregator.walrus-testnet.walrus.space';
-                const imageUrl = `${aggregatorUrl}/v1/blobs/${blobId}`;
+                const imageUrl = `${aggregatorUrl}/v1/blobs/${contractBlob.blobId}`;
                 postData = {
-                  content: '',
+                  content: contractBlob.text || '',
                   mediaUrl: imageUrl,
                   mediaType: 'image',
                   author: 'Unknown',
                   authorAddress: '0x0000000000000000000000000000000000000000',
-                  timestamp: Date.now(),
+                  timestamp: contractBlob.timestamp || Date.now(),
                 };
               } else {
                 // Try to parse as JSON
                 try {
                   postData = JSON.parse(blobData.content);
+                  // Override with contract text if available
+                  if (contractBlob.text) {
+                    postData.content = contractBlob.text;
+                  }
                 } catch {
-                  postData = { content: blobData.content };
+                  postData = { 
+                    content: contractBlob.text || blobData.content,
+                    timestamp: contractBlob.timestamp || Date.now(),
+                  };
                 }
               }
             } else {
               postData = blobData;
+              if (contractBlob.text) {
+                postData.content = contractBlob.text;
+              }
             }
           } else {
-            postData = { content: blobData };
+            postData = { 
+              content: contractBlob.text || blobData,
+              timestamp: contractBlob.timestamp || Date.now(),
+            };
           }
           
           // Ensure required fields exist
@@ -169,23 +183,26 @@ function DiscoverPageContent() {
               postData.type === 'post' ||
               postData.content || postData.mediaUrl)) {
             postsFromStorage.push({
-              id: blobId,
-              blobId: blobId,
+              id: contractBlob.blobId,
+              blobId: contractBlob.blobId,
               author: postData.author || postData.authorAddress?.slice(0, 6) + '...' + postData.authorAddress?.slice(-4) || 'Unknown',
               authorAddress: postData.authorAddress || '0x0000000000000000000000000000000000000000',
               content: postData.content || '',
-              mediaUrl: postData.mediaUrl || postData.media_url,
-              mediaType: postData.mediaType || postData.media_type || (postData.mediaUrl ? 'image' : 'text'),
-              timestamp: postData.timestamp || Date.now(),
-              ...postData,
-            } as Post);
+              mediaType: postData.mediaType || (postData.mediaUrl ? 'image' : 'text'),
+              mediaUrl: postData.mediaUrl,
+              ipTokenIds: postData.ipTokenIds || [],
+              likes: postData.likes || 0,
+              comments: postData.comments || 0,
+              timestamp: postData.timestamp || contractBlob.timestamp || Date.now(),
+              tags: postData.tags || [],
+            });
           }
         } catch (error) {
-          console.debug(`[loadPosts] Failed to read stored blob ${blobId}:`, error);
+          console.warn(`[loadPosts] Failed to load blob ${contractBlob.blobId}:`, error);
         }
       }
       
-      console.log('[loadPosts] Posts from stored blob IDs:', postsFromStorage.length);
+      console.log('[loadPosts] Posts from contract:', postsFromStorage.length);
       
       let result;
       
@@ -458,10 +475,9 @@ function DiscoverPageContent() {
     console.log('[handleSubmitPost] Post uploaded:', postResult.blobId);
 
     // Store blob IDs for this user
-    const { addUserBlobId } = await import('@/lib/utils/blob-storage');
-    addUserBlobId(currentAddress, postResult.blobId);
+    // Blob is already stored on-chain via storeBlob contract call in storePost
     if (mediaBlobId) {
-      addUserBlobId(currentAddress, mediaBlobId);
+      // Media blob is stored on-chain via storeBlob contract call
     }
     console.log('[handleSubmitPost] Stored blob IDs for user:', { 
       userAddress: currentAddress, 

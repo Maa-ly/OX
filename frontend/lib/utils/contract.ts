@@ -15,7 +15,8 @@ import {
   MARKETPLACE_OBJECT_ID, 
   REWARDS_REGISTRY_ID, 
   ORACLE_OBJECT_ID,
-  ORACLE_ADMIN_CAP_ID
+  ORACLE_ADMIN_CAP_ID,
+  BLOB_STORAGE_REGISTRY_ID
 } from './constants';
 
 /**
@@ -436,6 +437,59 @@ export async function recalculatePrice(
     transactionBlock: tx as any, // Type cast to avoid version conflicts
     options: {
       showEffects: true,
+    },
+  });
+
+  return {
+    digest: result.digest,
+  };
+}
+
+/**
+ * Store a blob ID on-chain after uploading to Walrus
+ * This maps the user's address to the blobId with optional text
+ * The user signs the transaction, and their address is automatically used
+ * 
+ * @param params - Blob storage parameters
+ * @param wallet - Wallet adapter from useWallet() hook
+ * @returns Promise with transaction result
+ */
+export async function storeBlob(
+  params: {
+    blobId: string; // Walrus blob ID
+    text?: string; // Optional text/description (empty string if not provided)
+  },
+  wallet: WalletAdapter
+): Promise<{ digest: string }> {
+  if (!wallet.connected || !wallet.account?.address) {
+    throw new Error('Wallet not connected');
+  }
+
+  if (!BLOB_STORAGE_REGISTRY_ID) {
+    throw new Error('Blob Storage Registry not deployed. Please set NEXT_PUBLIC_BLOB_STORAGE_REGISTRY_ID');
+  }
+
+  const tx = new Transaction();
+
+  // Convert blobId string to vector<u8>
+  const blobIdBytes = new TextEncoder().encode(params.blobId);
+  // Convert text to vector<u8> (empty vector if no text)
+  const textBytes = params.text ? new TextEncoder().encode(params.text) : new Uint8Array(0);
+
+  tx.moveCall({
+    target: `${PACKAGE_ID}::blob_storage::store_blob`,
+    arguments: [
+      tx.object(BLOB_STORAGE_REGISTRY_ID),
+      tx.pure.vector('u8', Array.from(blobIdBytes)),
+      tx.pure.vector('u8', Array.from(textBytes)),
+    ],
+  });
+
+  const result = await wallet.signAndExecuteTransactionBlock({
+    transactionBlock: tx as any, // Type cast to avoid version conflicts
+    options: {
+      showEffects: true,
+      showEvents: true,
     },
   });
 

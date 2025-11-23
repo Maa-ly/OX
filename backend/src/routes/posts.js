@@ -3,8 +3,7 @@ import multer from 'multer';
 import { logger } from '../utils/logger.js';
 import { WalrusService } from '../services/walrus.js';
 import { WalrusIndexerService, getIndexerService } from '../services/walrus-indexer.js';
-import { mongoDBBlobStorage } from '../services/mongodb-blob-storage.js';
-import { blobStorage } from '../services/blob-storage.js'; // Fallback
+// Blob storage is now handled on-chain via smart contract
 
 const router = express.Router();
 const walrusService = new WalrusService();
@@ -54,57 +53,8 @@ router.post('/index', async (req, res, next) => {
     const ipTokenIds = ['all', ...specificIpTokenIds];
 
     logger.info(`Indexing post for IP tokens: ${ipTokenIds.join(', ')}, blobId: ${blobId}`);
-
-    // Store blob ID persistently in MongoDB (like the NFT project does)
-    // This ensures blob IDs persist across server restarts
-    const authorAddress = post?.authorAddress;
-    if (authorAddress) {
-      try {
-        // Try MongoDB first
-        try {
-          await mongoDBBlobStorage.addBlobId(authorAddress, blobId, {
-            post_type: 'discover_post',
-            engagement_type: 'post',
-            ...post,
-            walrusResponse,
-          });
-          logger.info(`Persisted blob ID ${blobId} for user ${authorAddress} in MongoDB`);
-        } catch (mongoError) {
-          // Fallback to file-based storage
-          logger.warn('MongoDB storage failed, using file storage:', mongoError.message);
-          await blobStorage.addBlobId(blobId, {
-            post_type: 'discover_post',
-            engagement_type: 'post',
-            ...post,
-            walrusResponse,
-          }, authorAddress);
-        }
-      } catch (storageError) {
-        logger.warn(`Failed to persist blob ID:`, storageError);
-        // Don't fail the request - blob is still indexed in-memory
-      }
-    }
-
-    // Also store media blob ID if present
-    if (post?.mediaBlobId && authorAddress) {
-      try {
-        try {
-          await mongoDBBlobStorage.addBlobId(authorAddress, post.mediaBlobId, {
-            mediaType: post.mediaType,
-            isMedia: true,
-          });
-          logger.info(`Persisted media blob ID ${post.mediaBlobId} for user ${authorAddress} in MongoDB`);
-        } catch (mongoError) {
-          logger.warn('MongoDB storage failed for media, using file storage:', mongoError.message);
-          await blobStorage.addBlobId(post.mediaBlobId, {
-            mediaType: post.mediaType,
-            isMedia: true,
-          }, authorAddress);
-        }
-      } catch (storageError) {
-        logger.warn(`Failed to persist media blob ID:`, storageError);
-      }
-    }
+    // Note: Blob storage is now handled on-chain via smart contract (storeBlob function)
+    // The contract stores: address -> blobId + text mapping
 
     logger.info(`Post uploaded to Walrus: ${blobId}`, {
       hasFullResponse: !!walrusResponse,
@@ -227,61 +177,43 @@ router.get('/', async (req, res, next) => {
 
     logger.info('Fetching all posts', { ipTokenId, mediaType, userAddress, limit, offset });
 
-    // Get posts from persistent blob storage first (like the NFT project)
+    // Get posts from smart contract (blob storage)
     let allPosts = [];
-    
-    if (userAddress) {
-      // Get blob IDs for this user from persistent storage
-      try {
-        const blobIds = blobStorage.getUserBlobIds(userAddress);
-        logger.info(`Found ${blobIds.length} blob IDs for user ${userAddress} from persistent storage`);
-        
-        // Read each blob from Walrus
-        for (const blobId of blobIds) {
-          try {
-            const contribution = await walrusService.readContribution(blobId);
-            if (contribution.post_type === 'discover_post' || contribution.engagement_type === 'post') {
-              allPosts.push(contribution);
+    try {
+      // Fetch all blobs from the contract
+      const { contractService } = await import('../services/contract.js');
+      const contractBlobs = await contractService.getAllBlobs();
+      logger.info(`Found ${contractBlobs.length} blobs from contract`);
+      
+      // Read each blob from Walrus
+      for (const blob of contractBlobs) {
+        try {
+          const contribution = await walrusService.readContribution(blob.blobId);
+          if (contribution.post_type === 'discover_post' || contribution.engagement_type === 'post') {
+            // Override content with contract text if available
+            if (blob.text) {
+              contribution.content = blob.text;
             }
-          } catch (readError) {
-            logger.debug(`Failed to read blob ${blobId}:`, readError);
-          }
-        }
-      } catch (storageError) {
-        logger.warn('Failed to read from persistent storage, falling back to Sui query:', storageError);
-      }
-    } else {
-      // Get all blob IDs from all users
-      try {
-        const allBlobIds = blobStorage.getAllUserBlobIds();
-        logger.info(`Found ${allBlobIds.length} total blob IDs from persistent storage`);
-        
-        // Read each blob from Walrus
-        for (const blobId of allBlobIds) {
-          try {
-            const contribution = await walrusService.readContribution(blobId);
-            if (contribution.post_type === 'discover_post' || contribution.engagement_type === 'post') {
-              allPosts.push(contribution);
+            // Override timestamp with contract timestamp if available
+            if (blob.timestamp) {
+              contribution.timestamp = blob.timestamp;
             }
-          } catch (readError) {
-            logger.debug(`Failed to read blob ${blobId}:`, readError);
+            allPosts.push(contribution);
           }
+        } catch (readError) {
+          logger.debug(`Failed to read blob ${blob.blobId}:`, readError);
         }
-      } catch (storageError) {
-        logger.warn('Failed to read from persistent storage, falling back to Sui query:', storageError);
       }
-    }
-    
-    // Fallback: Query Walrus/Sui directly if persistent storage is empty
-    if (allPosts.length === 0) {
-      logger.info('No posts from persistent storage, querying Walrus/Sui directly...');
+      
+      logger.info(`Found ${allPosts.length} posts from contract blobs`);
+    } catch (error) {
+      logger.warn('Error reading from contract, falling back to Sui query:', error);
+      // Fallback: Query Walrus/Sui directly
       allPosts = await walrusService.getAllPosts({
         userAddress,
         ipTokenId,
       });
-      logger.info(`Found ${allPosts.length} total posts from Walrus/Sui`);
-    } else {
-      logger.info(`Found ${allPosts.length} total posts from persistent storage`);
+      logger.info(`Found ${allPosts.length} total posts from Walrus/Sui fallback`);
     }
 
     // If userAddress is provided, filter to show only that user's posts

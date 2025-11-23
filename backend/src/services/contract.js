@@ -24,6 +24,7 @@ export class ContractService {
     this.rewardsRegistryId = config.rewards.registryId;
     this.rewardConfigId = config.rewards.configId;
     this.priceOracleId = config.priceOracle.objectId;
+    this.blobStorageRegistryId = config.blobStorage?.registryId;
 
     // Load admin keypair from environment
     this.adminKeypair = this.loadAdminKeypair();
@@ -1248,6 +1249,111 @@ export class ContractService {
     } catch (error) {
       logger.error('Error getting object:', error);
       throw new Error(`Failed to get object: ${error.message}`);
+    }
+  }
+
+  /**
+   * Get all blobs stored on-chain
+   * @returns {Promise<Array>} Array of blob records with blobId, text, timestamp, and user address
+   */
+  async getAllBlobs() {
+    try {
+      if (!this.blobStorageRegistryId) {
+        throw new Error('Blob Storage Registry ID not configured. Set BLOB_STORAGE_REGISTRY_ID in .env');
+      }
+
+      const tx = new Transaction();
+      
+      tx.moveCall({
+        target: `${this.packageId}::blob_storage::get_all_blobs`,
+        arguments: [
+          tx.object(this.blobStorageRegistryId),
+        ],
+      });
+
+      const result = await this.client.devInspectTransactionBlock({
+        sender: this.adminKeypair?.toSuiAddress() || '0x0000000000000000000000000000000000000000000000000000000000000000',
+        transactionBlock: tx,
+      });
+
+      if (result.results?.[0]?.returnValues) {
+        const returnValue = result.results[0].returnValues[0];
+        // returnValue format: [bcsType, bcsBytes] where bcsBytes is base64 encoded
+        // For vector<BlobRecord>, we need to decode the BCS bytes
+        
+        const bcsBytes = Buffer.from(returnValue[1], 'base64');
+        const blobs = [];
+        
+        try {
+          // Parse vector length (uleb128)
+          let offset = 0;
+          let length = 0;
+          let shift = 0;
+          while (offset < bcsBytes.length) {
+            const byte = bcsBytes[offset++];
+            length |= (byte & 0x7f) << shift;
+            if ((byte & 0x80) === 0) break;
+            shift += 7;
+          }
+          
+          // Parse each BlobRecord
+          for (let i = 0; i < length; i++) {
+            // Parse blob_id: vector<u8>
+            let blobIdLength = 0;
+            shift = 0;
+            while (offset < bcsBytes.length) {
+              const byte = bcsBytes[offset++];
+              blobIdLength |= (byte & 0x7f) << shift;
+              if ((byte & 0x80) === 0) break;
+              shift += 7;
+            }
+            const blobIdBytes = bcsBytes.slice(offset, offset + blobIdLength);
+            offset += blobIdLength;
+            const blobId = blobIdBytes.toString('utf-8');
+            
+            // Parse text: Option<vector<u8>> (1 byte flag: 0 = none, 1 = some)
+            const hasText = bcsBytes[offset++] === 1;
+            let text = null;
+            if (hasText) {
+              let textLength = 0;
+              shift = 0;
+              while (offset < bcsBytes.length) {
+                const byte = bcsBytes[offset++];
+                textLength |= (byte & 0x7f) << shift;
+                if ((byte & 0x80) === 0) break;
+                shift += 7;
+              }
+              const textBytes = bcsBytes.slice(offset, offset + textLength);
+              offset += textLength;
+              text = textBytes.toString('utf-8');
+            }
+            
+            // Parse timestamp: u64 (little-endian, 8 bytes)
+            let timestamp = 0n;
+            for (let j = 0; j < 8; j++) {
+              timestamp |= BigInt(bcsBytes[offset + j]) << BigInt(j * 8);
+            }
+            offset += 8;
+            
+            blobs.push({
+              blobId,
+              text,
+              timestamp: Number(timestamp),
+            });
+          }
+        } catch (parseError) {
+          logger.error('Error parsing blob records from BCS:', parseError);
+          // Return empty array if parsing fails
+          return [];
+        }
+        
+        return blobs;
+      }
+
+      return [];
+    } catch (error) {
+      logger.error('Error getting all blobs:', error);
+      throw new Error(`Failed to get all blobs: ${error.message}`);
     }
   }
 }

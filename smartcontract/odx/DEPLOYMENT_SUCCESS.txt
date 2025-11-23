@@ -1,0 +1,63 @@
+========================================
+ODX Smart Contract - Deployment SUCCESS
+========================================
+Deployment Date: $(date)
+Network: Sui Testnet
+Status: SUCCESS
+
+PACKAGE INFORMATION
+-------------------
+Package ID: 0x2af094355e6f142d1f4e71a62f887008aaa9de1977bdc01141c8d0957976e6e5
+Version: 1
+Transaction Digest: HDjsfQuemAgzDvkH9qjwZBJGvvhpM7bZh3jgKr81wtWw
+Package Digest: 9mpUcvFE3B1FxVJKo23nSDFVFJAgufrMuSajpgJ3ZuXC
+Modules: blob_storage, datatypes, marketplace, oracle, rewards, token
+
+DEPLOYER INFORMATION
+--------------------
+Active Address: 0x6df2465c7b9a88e9769a625b3af0afbf41ab61d86183d85eb5fa5b7bd0549c71
+Network: testnet
+
+MODULES DEPLOYED
+----------------
+1. datatypes - Shared data structures
+2. token - IP token creation and management
+3. marketplace - Trading functionality
+4. rewards - Contributor tracking and rewards
+5. oracle - Price calculation
+6. blob_storage - Blob storage on-chain (address -> blobId mapping) [NEW]
+
+OBJECT IDs (All Created and Ready to Use)
+----------
+AdminCap: 0xc786f51e921127619a2e2612eb6d67f3f32837e94a25beaeab14f799d19a809c
+TokenRegistry: 0x1a6e731b77edd604ffaf4e9d588ab7f527027e7cdbc28ee24831140a752cd7c4
+Marketplace: 0x0cefc40cbdb3bd003959d115ed44d63a2e0705b2564974121cb06a3669ad240e
+RewardsRegistry: 0xd0d28b3daa7c662595f99fb6916a5e5b0444e2a301c9fa064b47a00aecccbdf6
+RewardConfig: 0x4f0db49ec80ed93c44c93f89d7648736229d070926b0180fcd41a6ee48cec52b
+PriceOracle: 0x14235612ed31a0ec37fded99011b02b9b631cfd2d91755d1e190eabdbcd92765
+OracleAdminCap: 0x5e20e39157de4b155ae14d19f8ef520cd7e4a6148c77cfed3b34199fb5bd0038
+BlobStorageRegistry: 0x99e84b93a345f1ccf39a848d48b989297ad46599b769cbd0bb0c197788d88713 [NEW]
+UpgradeCap: 0xca10446ebd922e0fefaa7d203ebc97521ada3074847424c6f66725ce4e1ccdfd
+
+GAS COST
+--------
+Storage Cost: 182650800 MIST (0.183 SUI)
+Computation Cost: 2000000 MIST (0.002 SUI)
+Storage Rebate: 978120 MIST (0.001 SUI)
+Non-refundable Storage Fee: 9880 MIST
+Total Gas Used: 183672680 MIST (0.184 SUI)
+
+IMPORTANT: UPDATE ENVIRONMENT VARIABLES
+----------------------------------------
+Update your .env files with:
+
+NEXT_PUBLIC_PACKAGE_ID=0x2af094355e6f142d1f4e71a62f887008aaa9de1977bdc01141c8d0957976e6e5
+NEXT_PUBLIC_BLOB_STORAGE_REGISTRY_ID=0x99e84b93a345f1ccf39a848d48b989297ad46599b769cbd0bb0c197788d88713
+
+Backend .env:
+BLOB_STORAGE_REGISTRY_ID=0x99e84b93a345f1ccf39a848d48b989297ad46599b769cbd0bb0c197788d88713
+
+ALL MODULES AUTOMATICALLY INITIALIZED DURING DEPLOYMENT!
+The blob_storage module was automatically initialized - no manual init needed!
+
+========================================

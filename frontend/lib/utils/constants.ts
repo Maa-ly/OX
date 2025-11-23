@@ -7,7 +7,7 @@ export const SUI_NETWORK = process.env.NEXT_PUBLIC_SUI_NETWORK || 'testnet';
 // Move Package ID - Deployed on Sui Testnet
 export const PACKAGE_ID =
   process.env.NEXT_PUBLIC_PACKAGE_ID ||
-  '0x8d128256cb4958701d56a0c9ada318691e763549766263a7a1c3bd5e9f2c96d0';
+  '0x2af094355e6f142d1f4e71a62f887008aaa9de1977bdc01141c8d0957976e6e5';
 
 // Oracle Object ID
 export const ORACLE_OBJECT_ID =
@@ -48,6 +48,11 @@ export const ADMIN_CAP_ID =
 export const ORACLE_ADMIN_CAP_ID =
   process.env.NEXT_PUBLIC_ORACLE_ADMIN_CAP_ID ||
   '0x75935be68ba984830004bb2271f93dc759d417d22ee1878dc84c75a42cb7b7b5';
+
+// Blob Storage Registry Object ID
+export const BLOB_STORAGE_REGISTRY_ID =
+  process.env.NEXT_PUBLIC_BLOB_STORAGE_REGISTRY_ID ||
+  '0x99e84b93a345f1ccf39a848d48b989297ad46599b769cbd0bb0c197788d88713';
 
 // Backend API URL
 // Backend typically runs on port 3001 to avoid conflict with Next.js frontend (port 3000)

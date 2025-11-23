@@ -543,5 +543,28 @@ router.get('/debug/registry', async (req, res, next) => {
   }
 });
 
+// ============================================================================
+// BLOB STORAGE ROUTES
+// ============================================================================
+
+/**
+ * Get all blobs stored on-chain
+ * GET /contract/blobs
+ */
+router.get('/blobs', async (req, res, next) => {
+  try {
+    const blobs = await contractService.getAllBlobs();
+    
+    res.json({
+      success: true,
+      count: blobs.length,
+      blobs,
+    });
+  } catch (error) {
+    logger.error('Error getting all blobs:', error);
+    next(error);
+  }
+});
+
 export default router;
 

@@ -493,6 +493,24 @@ export async function storePost(
     
     blobId = result.blobId;
     console.log('[storePost] Post stored successfully on Walrus:', blobId);
+    
+    // Store blob ID on-chain in the smart contract
+    try {
+      console.log('[storePost] Storing blob ID on-chain...', { blobId, hasText: !!post.content });
+      const { storeBlob } = await import('./contract');
+      await storeBlob(
+        {
+          blobId,
+          text: post.content || undefined, // Include text if post has content
+        },
+        wallet
+      );
+      console.log('[storePost] Blob ID stored on-chain successfully');
+    } catch (contractError: any) {
+      console.error('[storePost] Error storing blob on-chain:', contractError);
+      // Don't fail the entire upload if contract call fails - Walrus storage succeeded
+      // The blob is still stored on Walrus, just not registered on-chain
+    }
   } catch (walrusError: any) {
     console.error('[storePost] Error storing post on Walrus:', {
       error: walrusError,

@@ -66,6 +66,11 @@ export const config = {
     objectId: process.env.PRICE_ORACLE_ID || '0x5c1456d721c8217e932591dd9d3b41753ee9f24246f2f651dd9e81bb8ad061c8',
   },
 
+  // Blob Storage Configuration
+  blobStorage: {
+    registryId: process.env.BLOB_STORAGE_REGISTRY_ID || '',
+  },
+
   // Update Configuration
   update: {
     interval: parseInt(process.env.UPDATE_INTERVAL || '3600000', 10), // Default 1 hour

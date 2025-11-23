@@ -82,6 +82,7 @@ MODULES DEPLOYED
 4. rewards - Contributor tracking and rewards
 5. oracle - Price calculation
 6. odx - Main library module
+7. blob_storage - Blob storage on-chain (address -> blobId mapping)
 
 OBJECT IDs
 ----------
@@ -100,6 +101,9 @@ NEXT STEPS
 
 4. Initialize Oracle:
    sui client call --package ${PACKAGE_ID:-<PACKAGE_ID>} --module oracle --function init --gas-budget 10000000
+
+5. Initialize Blob Storage:
+   sui client call --package ${PACKAGE_ID:-<PACKAGE_ID>} --module blob_storage --function init --gas-budget 10000000
 
 FULL DEPLOYMENT OUTPUT
 ----------------------
