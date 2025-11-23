@@ -2,7 +2,8 @@
 
 import { useEffect, useState, Suspense } from 'react';
 import Link from 'next/link';
-import { mockAPI, type IPToken } from '@/lib/mocks/data';
+import { getIPTokens, type IPToken } from '@/lib/utils/api';
+import { getAllCurrentPrices, getPriceFeedSSE, formatPrice, type PriceData } from '@/lib/utils/price-feed';
 import { Header } from '@/components/shared/header';
 
 // Force dynamic rendering to avoid useSearchParams() prerendering issues
@@ -10,6 +11,7 @@ export const dynamic = 'force-dynamic';
 
 function MarketplaceContent() {
   const [tokens, setTokens] = useState<IPToken[]>([]);
+  const [priceData, setPriceData] = useState<Map<string, PriceData>>(new Map());
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterCategory, setFilterCategory] = useState<'all' | 'anime' | 'manga' | 'manhwa'>('all');
@@ -18,11 +20,38 @@ function MarketplaceContent() {
     loadTokens();
   }, []);
 
+  // Subscribe to real-time price updates
+  useEffect(() => {
+    const sse = getPriceFeedSSE();
+    const unsubscribe = sse.subscribe((prices) => {
+      setPriceData(prevPriceMap => {
+        const newPriceMap = new Map(prevPriceMap);
+        prices.forEach(price => {
+          newPriceMap.set(price.ipTokenId, price);
+        });
+        return newPriceMap;
+      });
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
   const loadTokens = async () => {
     setLoading(true);
     try {
-      const data = await mockAPI.getIPTokens();
+      // Load tokens from API
+      const data = await getIPTokens(true);
       setTokens(data);
+      
+      // Load initial prices
+      const prices = await getAllCurrentPrices();
+      const priceMap = new Map<string, PriceData>();
+      prices.forEach(price => {
+        priceMap.set(price.ipTokenId, price);
+      });
+      setPriceData(priceMap);
     } catch (error) {
       console.error('Failed to load tokens:', error);
     } finally {
@@ -110,10 +139,25 @@ function MarketplaceContent() {
                     <div className="text-sm text-zinc-400 mt-1">{token.symbol} • {token.category}</div>
                   </div>
                   <div className="text-right">
-                    <div className="text-2xl font-bold text-white">${token.currentPrice.toFixed(2)}</div>
-                    <div className={`text-sm font-medium ${token.priceChange24h >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                      {token.priceChange24h >= 0 ? '+' : ''}{token.priceChange24h.toFixed(2)}%
-                    </div>
+                    {(() => {
+                      const price = priceData.get(token.id);
+                      const currentPrice = price ? formatPrice(price.price) : (token.currentPrice || 0);
+                      const previousPrice = price?.ohlc?.open ? formatPrice(price.ohlc.open) : currentPrice;
+                      const priceChange = previousPrice > 0 
+                        ? ((currentPrice - previousPrice) / previousPrice) * 100 
+                        : (token.priceChange24h || 0);
+                      
+                      return (
+                        <>
+                          <div className="text-2xl font-bold text-white">
+                            {currentPrice.toFixed(6)} SUI
+                          </div>
+                          <div className={`text-sm font-medium ${priceChange >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                            {priceChange >= 0 ? '+' : ''}{priceChange.toFixed(2)}%
+                          </div>
+                        </>
+                      );
+                    })()}
                   </div>
                 </div>
 
