@@ -67,7 +67,7 @@ export function MobileBottomNav() {
   ];
 
   return (
-    <div className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-linear-to-t from-[#0a0a0f] via-[#0a0a0f]/98 to-[#0a0a0f]/95 border-t border-zinc-800/30 backdrop-blur-2xl">
+    <div className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-zinc-900/40 backdrop-blur-xl border-t border-white/10 shadow-lg">
       <div className="flex items-center justify-around px-4 py-3">
         {navItems.map((item) => (
           <Link
@@ -97,7 +97,7 @@ export function MobileBottomNav() {
         ))}
       </div>
       {/* Bottom safe area for iOS */}
-      <div className="h-safe-bottom bg-[#0a0a0f]"></div>
+      <div className="h-safe-bottom bg-transparent"></div>
     </div>
   );
 }

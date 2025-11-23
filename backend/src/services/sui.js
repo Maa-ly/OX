@@ -1,6 +1,7 @@
 import { SuiClient, getFullnodeUrl } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
+import { fromB64 } from '@mysten/sui/utils';
 import { config } from '../config/config.js';
 import { logger } from '../utils/logger.js';
 
@@ -11,9 +12,30 @@ export class SuiService {
     this.oracleObjectId = config.oracle.objectId;
     this.adminCapId = config.oracle.adminCapId;
 
-    // TODO: Load admin keypair from secure storage (env var, keychain, etc.)
-    // For now, this is a placeholder
     this.adminKeypair = null;
+    try {
+      const privateKey = process.env.ADMIN_PRIVATE_KEY;
+      if (privateKey) {
+        let bytes;
+        if (privateKey.length === 64 && /^[0-9a-fA-F]+$/.test(privateKey)) {
+          bytes = Buffer.from(privateKey, 'hex');
+        } else {
+          try {
+            bytes = fromB64(privateKey);
+          } catch {
+            bytes = Buffer.from(privateKey, 'hex');
+          }
+        }
+        if (bytes && bytes.length === 32) {
+          this.adminKeypair = Ed25519Keypair.fromSecretKey(bytes);
+          logger.info('Admin keypair loaded for SuiService');
+        } else {
+          logger.warn('Invalid ADMIN_PRIVATE_KEY length for SuiService');
+        }
+      }
+    } catch (e) {
+      logger.warn('Failed to load ADMIN_PRIVATE_KEY for SuiService:', e.message);
+    }
   }
 
   /**
@@ -29,8 +51,9 @@ export class SuiService {
         throw new Error('Oracle configuration incomplete. Set PACKAGE_ID, ORACLE_OBJECT_ID, and ADMIN_CAP_ID in .env');
       }
 
-      if (!this.adminKeypair) {
-        throw new Error('Admin keypair not configured');
+      if (!this.adminKeypair || process.env.ENABLE_ONCHAIN !== 'true') {
+        logger.warn('On-chain update disabled or admin key not configured; skipping on-chain update');
+        return { digest: 'dry-run', skipped: true };
       }
 
       logger.info(`Updating on-chain metrics for IP token: ${ipTokenId} (with ${nautilusMetrics.length} Nautilus sources)`);

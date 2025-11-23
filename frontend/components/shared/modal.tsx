@@ -2,7 +2,6 @@
 
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { useState } from 'react';
 
 interface ModalProps {
   open: boolean;
@@ -21,12 +20,6 @@ export function Modal({
   size = 'md',
   showCloseButton = true,
 }: ModalProps) {
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
   useEffect(() => {
     if (open) {
       document.body.style.overflow = 'hidden';
@@ -38,7 +31,7 @@ export function Modal({
     };
   }, [open]);
 
-  if (!mounted || !open) return null;
+  if (!open || typeof document === 'undefined') return null;
 
   const sizeClasses = {
     sm: 'max-w-sm',
@@ -48,16 +41,16 @@ export function Modal({
   };
 
   const modalContent = (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 overflow-y-auto">
+    <div className="fixed inset-0 z-9999 flex items-center justify-center p-4 overflow-y-auto">
       {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9998]"
+        className="fixed inset-0 bg-black/60 backdrop-blur-sm z-9998"
         onClick={onClose}
       />
 
       {/* Modal content */}
       <div
-        className={`relative z-[9999] w-full ${sizeClasses[size]} my-auto rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl`}
+        className={`relative z-9999 w-full ${sizeClasses[size]} my-auto rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -139,7 +132,7 @@ export function ErrorModal({
     <Modal open={open} onClose={onClose} title={friendlyMessage} size="md">
       <div className="space-y-4">
         <div className="flex items-start gap-3">
-          <div className="flex-shrink-0">
+          <div className="shrink-0">
             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-red-500/10">
               <svg
                 className="h-6 w-6 text-red-500"
@@ -242,7 +235,7 @@ export function SuccessModal({
     <Modal open={open} onClose={onClose} title={title} size="md">
       <div className="space-y-4">
         <div className="flex items-start gap-3">
-          <div className="flex-shrink-0">
+          <div className="shrink-0">
             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-green-500/10">
               <svg
                 className="h-6 w-6 text-green-500"
