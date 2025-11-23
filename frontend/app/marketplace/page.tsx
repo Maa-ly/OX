@@ -166,20 +166,28 @@ function MarketplaceContent() {
                 <div className="grid grid-cols-2 gap-4 pt-4 border-t border-zinc-800">
                   <div>
                     <div className="text-xs text-zinc-500 mb-1">Rating</div>
-                    <div className="text-sm font-semibold text-white">{token.averageRating.toFixed(1)}/10</div>
+                    <div className="text-sm font-semibold text-white">
+                      {token.averageRating ? token.averageRating.toFixed(1) : 'N/A'}/10
+                    </div>
                   </div>
                   <div>
                     <div className="text-xs text-zinc-500 mb-1">Contributions</div>
-                    <div className="text-sm font-semibold text-white">{token.totalContributions.toLocaleString()}</div>
+                    <div className="text-sm font-semibold text-white">
+                      {(token.totalContributions || 0).toLocaleString()}
+                    </div>
                   </div>
                   <div>
                     <div className="text-xs text-zinc-500 mb-1">Contributors</div>
-                    <div className="text-sm font-semibold text-white">{token.contributors.toLocaleString()}</div>
+                    <div className="text-sm font-semibold text-white">
+                      {(token.contributors || 0).toLocaleString()}
+                    </div>
                   </div>
                   <div>
                     <div className="text-xs text-zinc-500 mb-1">Supply</div>
                     <div className="text-sm font-semibold text-white">
-                      {((token.circulatingSupply / token.totalSupply) * 100).toFixed(1)}%
+                      {token.circulatingSupply && token.totalSupply
+                        ? ((token.circulatingSupply / token.totalSupply) * 100).toFixed(1)
+                        : 'N/A'}%
                     </div>
                   </div>
                 </div>

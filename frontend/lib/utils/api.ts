@@ -143,6 +143,9 @@ export interface IPToken {
   currentPrice?: number;
   priceChange24h?: number;
   imageUrl?: string;
+  averageRating?: number;
+  totalContributions?: number;
+  contributors?: number;
 }
 
 /**
@@ -175,6 +178,9 @@ export async function getIPTokens(detailed: boolean = true): Promise<IPToken[]> 
       circulatingSupply: token.circulatingSupply,
       currentPrice: token.currentPrice,
       priceChange24h: token.priceChange24h,
+      averageRating: token.averageRating,
+      totalContributions: token.totalContributions,
+      contributors: token.contributors,
     }));
   } else if (data.tokens && Array.isArray(data.tokens)) {
     // If just IDs, return minimal format
