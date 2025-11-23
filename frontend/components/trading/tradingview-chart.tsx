@@ -42,8 +42,11 @@ export function TradingViewChart({
     // https://www.tradingview.com/charting-library/
     // and place it in frontend/public/charting_library/
     
+    let localScript: HTMLScriptElement | null = null;
+    let cdnScript: HTMLScriptElement | null = null;
+    
     // Try to load from local path first (if library is self-hosted)
-    const localScript = document.createElement('script');
+    localScript = document.createElement('script');
     localScript.src = '/charting_library/charting_library.standalone.js';
     localScript.async = true;
     localScript.onload = () => {
@@ -52,7 +55,7 @@ export function TradingViewChart({
     localScript.onerror = () => {
       // Fallback: Try CDN (limited functionality)
       console.warn('Local TradingView library not found, trying CDN (limited functionality)...');
-      const cdnScript = document.createElement('script');
+      cdnScript = document.createElement('script');
       cdnScript.src = 'https://charting-library.tradingview-widget.com/charting_library/charting_library.standalone.js';
       cdnScript.async = true;
       cdnScript.onload = () => {
@@ -66,8 +69,12 @@ export function TradingViewChart({
     document.head.appendChild(localScript);
 
     return () => {
-      if (script.parentNode) {
-        script.parentNode.removeChild(script);
+      // Clean up scripts
+      if (localScript && localScript.parentNode) {
+        localScript.parentNode.removeChild(localScript);
+      }
+      if (cdnScript && cdnScript.parentNode) {
+        cdnScript.parentNode.removeChild(cdnScript);
       }
     };
   }, []);
