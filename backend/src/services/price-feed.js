@@ -108,7 +108,42 @@ export class PriceFeedService {
     try {
       // Get all IP tokens from contract
       const { contractService } = await import('./contract.js');
-      const tokens = await contractService.getAllTokens({ detailed: true });
+      
+      // getAllTokens() returns array of token ID strings, not objects
+      // Use getAllTokensWithInfo() to get full token details
+      let tokens;
+      try {
+        tokens = await contractService.getAllTokensWithInfo();
+        logger.info(`Retrieved ${tokens.length} tokens with info`);
+      } catch (error) {
+        logger.warn('getAllTokensWithInfo failed, trying getAllTokens:', error.message);
+        // Fallback: get just IDs and fetch info separately
+        const tokenIds = await contractService.getAllTokens();
+        logger.info(`Retrieved ${tokenIds.length} token IDs`);
+        
+        // Fetch info for each token
+        tokens = await Promise.all(
+          tokenIds.map(async (tokenId) => {
+            try {
+              const info = await contractService.getTokenInfo(tokenId);
+              return {
+                id: tokenId,
+                tokenId: tokenId,
+                name: info.name || 'Unknown',
+                symbol: info.symbol || 'UNK',
+              };
+            } catch (err) {
+              logger.warn(`Failed to get info for token ${tokenId}:`, err.message);
+              return {
+                id: tokenId,
+                tokenId: tokenId,
+                name: 'Unknown',
+                symbol: 'UNK',
+              };
+            }
+          })
+        );
+      }
       
       logger.info(`Updating prices for ${tokens.length} tokens`);
       
@@ -120,8 +155,15 @@ export class PriceFeedService {
       // Update each token's price
       const updates = await Promise.allSettled(
         tokens.map(token => {
-          const tokenId = token.id || token.tokenId;
-          const tokenName = token.name || token.symbol || 'Unknown';
+          // Handle both object format and string format
+          const tokenId = typeof token === 'string' ? token : (token.id || token.tokenId);
+          const tokenName = typeof token === 'string' ? 'Unknown' : (token.name || token.symbol || 'Unknown');
+          
+          if (!tokenId) {
+            logger.error('Token missing ID:', token);
+            return Promise.reject(new Error('Token missing ID'));
+          }
+          
           return this.updatePriceForToken(tokenId, tokenName);
         })
       );
@@ -133,11 +175,21 @@ export class PriceFeedService {
       updates.forEach((update, index) => {
         if (update.status === 'rejected') {
           const token = tokens[index];
-          logger.error(`Failed to update price for token ${token?.id || token?.tokenId}:`, update.reason);
+          const tokenId = typeof token === 'string' ? token : (token?.id || token?.tokenId);
+          logger.error(`Failed to update price for token ${tokenId}:`, update.reason);
+          if (update.reason?.stack) {
+            logger.error('Error stack:', update.reason.stack);
+          }
         }
       });
       
       logger.info(`Price update complete: ${successful} successful, ${failed} failed out of ${tokens.length} tokens`);
+      
+      // Log current prices for debugging
+      logger.debug(`Current prices in cache: ${this.currentPrices.size} tokens`);
+      for (const [ipTokenId, data] of this.currentPrices.entries()) {
+        logger.debug(`  - ${ipTokenId}: ${data.price / 1e9} SUI (${data.tokenName || 'Unknown'})`);
+      }
       
       // Broadcast updates to connected clients
       this.broadcastPriceUpdates();

@@ -254,13 +254,38 @@ router.get('/stream', (req, res) => {
   }));
   
   if (currentPrices.length > 0) {
+    logger.debug(`SSE: Sending ${currentPrices.length} current prices to client`);
     res.write(`data: ${JSON.stringify({ type: 'price_update', data: currentPrices })}\n\n`);
   } else {
     // If no prices yet, trigger an update
-    logger.info('No current prices available, triggering initial update...');
-    priceFeedService.updateAllPrices().catch(err => {
-      logger.error('Error in initial price update for SSE:', err);
-    });
+    logger.info('SSE: No current prices available, triggering initial update...');
+    priceFeedService.updateAllPrices()
+      .then(result => {
+        logger.info(`SSE: Initial price update completed: ${result.successful} successful, ${result.failed} failed, ${result.tokens} tokens`);
+        // After update, send the new prices
+        const updatedPrices = Array.from(priceFeedService.currentPrices.entries()).map(([ipTokenId, data]) => ({
+          ipTokenId: ipTokenId,
+          price: data.price,
+          timestamp: data.timestamp,
+          ohlc: data.ohlc || {
+            open: data.price,
+            high: data.price,
+            low: data.price,
+            close: data.price,
+            timestamp: data.timestamp,
+          },
+        }));
+        if (updatedPrices.length > 0) {
+          res.write(`data: ${JSON.stringify({ type: 'price_update', data: updatedPrices })}\n\n`);
+        } else {
+          logger.warn('SSE: Still no prices after initial update. Check if tokens exist in contract.');
+          res.write(`data: ${JSON.stringify({ type: 'error', message: 'No tokens found. Prices will be available after tokens are created.' })}\n\n`);
+        }
+      })
+      .catch(err => {
+        logger.error('SSE: Error in initial price update:', err);
+        res.write(`data: ${JSON.stringify({ type: 'error', message: `Failed to initialize prices: ${err.message}` })}\n\n`);
+      });
   }
   
   // Handle client disconnect
