@@ -46,11 +46,21 @@ export interface EngagementMetrics {
  */
 export async function getCurrentPrice(ipTokenId: string): Promise<PriceData | null> {
   try {
+    if (!API_BASE_URL || API_BASE_URL === 'http://localhost:3001') {
+      console.warn('[PriceFeed] Backend API not configured. Set NEXT_PUBLIC_API_BASE_URL environment variable.');
+      return null;
+    }
+
     const response = await fetch(`${API_BASE_URL}/api/price-feed/current/${ipTokenId}`);
     
     if (!response.ok) {
       if (response.status === 404) {
         return null; // Price not found
+      }
+      // Don't throw for network errors, just return null
+      if (response.status === 0 || response.status >= 500) {
+        console.warn('[PriceFeed] Backend may not be deployed. See BACKEND_DEPLOYMENT.md');
+        return null;
       }
       throw new Error(`Failed to fetch price: ${response.statusText}`);
     }
@@ -58,7 +68,12 @@ export async function getCurrentPrice(ipTokenId: string): Promise<PriceData | nu
     const data = await response.json();
     return data.success ? data : null;
   } catch (error) {
-    console.error('Error fetching current price:', error);
+    // Network errors are expected if backend is not deployed
+    if (error instanceof TypeError && error.message.includes('fetch')) {
+      console.warn('[PriceFeed] Cannot connect to backend. Backend may not be deployed. See BACKEND_DEPLOYMENT.md');
+    } else {
+      console.error('Error fetching current price:', error);
+    }
     return null;
   }
 }
@@ -179,6 +194,13 @@ export class PriceFeedSSE {
       return;
     }
 
+    // Check if API_BASE_URL is configured
+    if (!API_BASE_URL || API_BASE_URL === 'http://localhost:3001') {
+      console.warn('[PriceFeed] API_BASE_URL not configured. Backend may not be deployed. Set NEXT_PUBLIC_API_BASE_URL environment variable.');
+      // Don't attempt connection if backend URL is not configured
+      return;
+    }
+
     this.isConnecting = true;
     
     try {
@@ -186,7 +208,7 @@ export class PriceFeedSSE {
       this.eventSource = new EventSource(streamUrl);
       
       this.eventSource.onopen = () => {
-        console.log('[PriceFeed] SSE connected');
+        console.log('[PriceFeed] SSE connected to', streamUrl);
         this.isConnecting = false;
         this.reconnectAttempts = 0;
       };
@@ -226,7 +248,7 @@ export class PriceFeedSSE {
               this.connect();
             }, delay);
           } else {
-            console.error('[PriceFeed] Max reconnection attempts reached');
+            console.error('[PriceFeed] Max reconnection attempts reached. Backend may not be deployed. See BACKEND_DEPLOYMENT.md for deployment instructions.');
           }
         }
       };

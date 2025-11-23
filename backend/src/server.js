@@ -36,6 +36,7 @@ const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:3001',
   'https://ox-gold.vercel.app',
+  'https://ox-1bq4.vercel.app', // Current Vercel deployment
   process.env.FRONTEND_URL,
 ].filter(Boolean); // Remove undefined values
 

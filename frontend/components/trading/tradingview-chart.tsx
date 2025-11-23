@@ -162,7 +162,10 @@ export function TradingViewChart({
 
       // Add custom CSS if available (optional)
       // The CSS file should be in public/tradingview-custom.css
-      // widgetConfig.custom_css_url = '/tradingview-custom.css';
+      // Only set if the library is self-hosted
+      if (typeof window !== 'undefined' && window.location.pathname.includes('/charting_library/')) {
+        widgetConfig.custom_css_url = '/tradingview-custom.css';
+      }
       
       // Note: library_path is only needed if you've downloaded and self-hosted
       // the TradingView Charting Library. For CDN usage, omit this.
