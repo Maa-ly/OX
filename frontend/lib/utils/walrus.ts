@@ -781,7 +781,11 @@ export async function getPosts(options?: {
     }
 
     // Sort by timestamp (newest first)
-    posts.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    posts.sort((a, b) => {
+      const aTime = typeof a.timestamp === 'number' ? a.timestamp : typeof a.timestamp === 'string' ? parseInt(a.timestamp, 10) : 0;
+      const bTime = typeof b.timestamp === 'number' ? b.timestamp : typeof b.timestamp === 'string' ? parseInt(b.timestamp, 10) : 0;
+      return bTime - aTime;
+    });
 
     // Apply pagination
     const limit = options?.limit || 1000;
@@ -983,7 +987,11 @@ export async function getPostsByAddress(walletAddress: string): Promise<{ posts:
     }
 
     // Sort by timestamp (newest first)
-    posts.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    posts.sort((a, b) => {
+      const aTime = typeof a.timestamp === 'number' ? a.timestamp : typeof a.timestamp === 'string' ? parseInt(a.timestamp, 10) : 0;
+      const bTime = typeof b.timestamp === 'number' ? b.timestamp : typeof b.timestamp === 'string' ? parseInt(b.timestamp, 10) : 0;
+      return bTime - aTime;
+    });
 
     console.log(`[getPostsByAddress] Successfully read ${readCount} posts (${errorCount} errors)`);
     

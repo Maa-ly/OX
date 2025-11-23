@@ -754,7 +754,7 @@ export default function PortfolioPage() {
                 {/* Save Button */}
                 <button
                   onClick={handleSaveProfile}
-                  disabled={savingProfile || (username && usernameAvailable === false)}
+                  disabled={savingProfile || (!!username && usernameAvailable === false)}
                   className="w-full px-4 py-3 bg-cyan-500 hover:bg-cyan-600 disabled:bg-zinc-700 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors"
                 >
                   {savingProfile ? 'Saving...' : 'Save Profile'}
