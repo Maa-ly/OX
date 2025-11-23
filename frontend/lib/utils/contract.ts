@@ -118,8 +118,23 @@ export async function createBuyOrder(
     throw new Error('Wallet not connected');
   }
 
+  console.log('[createBuyOrder] Creating buy order:', {
+    ipTokenId: params.ipTokenId,
+    price: params.price,
+    quantity: params.quantity,
+    paymentCoinId: params.paymentCoinId,
+    packageId: PACKAGE_ID,
+    marketplaceId: MARKETPLACE_OBJECT_ID,
+  });
+
   const tx = new Transaction();
 
+  // Set sender if available (some wallets need this)
+  if (wallet.account?.address && typeof tx.setSender === 'function') {
+    tx.setSender(wallet.account.address);
+  }
+
+  // Call the smart contract function
   tx.moveCall({
     target: `${PACKAGE_ID}::marketplace::create_buy_order`,
     arguments: [
@@ -131,6 +146,9 @@ export async function createBuyOrder(
     ],
   });
 
+  console.log('[createBuyOrder] Transaction prepared, requesting wallet signature...');
+
+  // Sign and execute transaction - this will trigger wallet popup
   const result = await wallet.signAndExecuteTransactionBlock({
     transactionBlock: tx as any, // Type cast to avoid version conflicts
     options: {
@@ -139,9 +157,18 @@ export async function createBuyOrder(
     },
   });
 
+  console.log('[createBuyOrder] Transaction executed:', {
+    digest: result.digest,
+    objectChanges: result.objectChanges?.length,
+  });
+
   const createdOrder = result.objectChanges?.find(
     (change: any) => change.type === 'created' && change.objectType?.includes('MarketOrder')
   );
+
+  if (!createdOrder) {
+    console.warn('[createBuyOrder] No MarketOrder created in transaction. Object changes:', result.objectChanges);
+  }
 
   return {
     digest: result.digest,
@@ -169,8 +196,22 @@ export async function createSellOrder(
     throw new Error('Wallet not connected');
   }
 
+  console.log('[createSellOrder] Creating sell order:', {
+    ipTokenId: params.ipTokenId,
+    price: params.price,
+    quantity: params.quantity,
+    packageId: PACKAGE_ID,
+    marketplaceId: MARKETPLACE_OBJECT_ID,
+  });
+
   const tx = new Transaction();
 
+  // Set sender if available (some wallets need this)
+  if (wallet.account?.address && typeof tx.setSender === 'function') {
+    tx.setSender(wallet.account.address);
+  }
+
+  // Call the smart contract function
   tx.moveCall({
     target: `${PACKAGE_ID}::marketplace::create_sell_order`,
     arguments: [
@@ -181,6 +222,9 @@ export async function createSellOrder(
     ],
   });
 
+  console.log('[createSellOrder] Transaction prepared, requesting wallet signature...');
+
+  // Sign and execute transaction - this will trigger wallet popup
   const result = await wallet.signAndExecuteTransactionBlock({
     transactionBlock: tx as any, // Type cast to avoid version conflicts
     options: {
@@ -189,9 +233,18 @@ export async function createSellOrder(
     },
   });
 
+  console.log('[createSellOrder] Transaction executed:', {
+    digest: result.digest,
+    objectChanges: result.objectChanges?.length,
+  });
+
   const createdOrder = result.objectChanges?.find(
     (change: any) => change.type === 'created' && change.objectType?.includes('MarketOrder')
   );
+
+  if (!createdOrder) {
+    console.warn('[createSellOrder] No MarketOrder created in transaction. Object changes:', result.objectChanges);
+  }
 
   return {
     digest: result.digest,

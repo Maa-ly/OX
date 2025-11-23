@@ -247,7 +247,7 @@ public fun calculate_reward(
 /// 
 /// # Returns:
 /// - `u64`: Amount of tokens distributed
-public fun distribute_reward(
+public entry fun distribute_reward(
     registry: &mut RewardsRegistry,
     config: &RewardConfig,
     ip_token: &mut IPToken,

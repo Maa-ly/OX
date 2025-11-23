@@ -3,11 +3,13 @@ import multer from 'multer';
 import { logger } from '../utils/logger.js';
 import { WalrusService } from '../services/walrus.js';
 import { WalrusIndexerService, getIndexerService } from '../services/walrus-indexer.js';
+import { ContractService } from '../services/contract.js';
 // Blob storage is now handled on-chain via smart contract
 
 const router = express.Router();
 const walrusService = new WalrusService();
 const indexerService = getIndexerService(); // Use singleton instance
+const contractService = new ContractService();
 
 // Export indexerService so walrus.js can use the same instance
 export { indexerService };
@@ -157,6 +159,175 @@ router.post('/', async (req, res, next) => {
   } catch (error) {
     logger.error('Error in deprecated /api/posts endpoint:', error);
     next(error);
+  }
+});
+
+/**
+ * Get all posts with IP token associations for oracle metrics
+ * GET /api/posts/oracle-metrics
+ * 
+ * Returns all posts with their associated IP tokens for oracle aggregation
+ * This endpoint is specifically designed for the oracle to track post activities
+ */
+router.get('/oracle-metrics', async (req, res, next) => {
+  try {
+    logger.info('Fetching all posts for oracle metrics');
+
+    // Get posts from smart contract (blob storage)
+    let allPosts = [];
+    try {
+      // Fetch all blobs from the contract
+      const { contractService } = await import('../services/contract.js');
+      const contractBlobs = await contractService.getAllBlobs();
+      logger.info(`Found ${contractBlobs.length} blobs from contract`);
+      
+      // Read each blob from Walrus
+      for (const blob of contractBlobs) {
+        try {
+          const contribution = await walrusService.readContribution(blob.blobId);
+          if (contribution.post_type === 'discover_post' || contribution.engagement_type === 'post') {
+            // Override content with contract text if available
+            if (blob.text) {
+              contribution.content = blob.text;
+            }
+            // Override timestamp with contract timestamp if available
+            if (blob.timestamp) {
+              contribution.timestamp = blob.timestamp;
+            }
+            allPosts.push(contribution);
+          }
+        } catch (readError) {
+          logger.debug(`Failed to read blob ${blob.blobId}:`, readError);
+        }
+      }
+      
+      logger.info(`Found ${allPosts.length} posts from contract blobs`);
+    } catch (error) {
+      logger.warn('Error reading from contract, falling back to Sui query:', error);
+      // Fallback: Query Walrus/Sui directly
+      allPosts = await walrusService.getAllPosts({});
+      logger.info(`Found ${allPosts.length} total posts from Walrus/Sui fallback`);
+    }
+
+    // Format posts for oracle with IP token associations
+    const postsWithIpTokens = allPosts.map(post => {
+      // Extract IP token IDs - remove 'all' as it's not a real token
+      const ipTokenIds = (post.ipTokenIds || []).filter(id => id !== 'all');
+      
+      return {
+        blobId: post.blobId || post.id || post.walrus_blob_id || post.walrus_cid,
+        authorAddress: post.authorAddress || post.author,
+        content: post.content || '',
+        mediaType: post.mediaType || 'text',
+        mediaBlobId: post.mediaBlobId || post.media_blob_id,
+        ipTokenIds: ipTokenIds.length > 0 ? ipTokenIds : [], // Empty array if no specific IP tokens
+        timestamp: post.timestamp || Date.now(),
+        likes: post.likes || 0,
+        comments: post.comments || 0,
+        engagementType: post.engagement_type || 'post',
+        postType: post.post_type || 'discover_post',
+      };
+    });
+
+    // Sort by timestamp (newest first)
+    postsWithIpTokens.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+    // Group by IP token for easier aggregation
+    const postsByIpToken = {};
+    for (const post of postsWithIpTokens) {
+      if (post.ipTokenIds.length === 0) {
+        // Posts without specific IP tokens go under 'general'
+        if (!postsByIpToken['general']) {
+          postsByIpToken['general'] = [];
+        }
+        postsByIpToken['general'].push(post);
+      } else {
+        // Add post to each associated IP token
+        for (const ipTokenId of post.ipTokenIds) {
+          if (!postsByIpToken[ipTokenId]) {
+            postsByIpToken[ipTokenId] = [];
+          }
+          postsByIpToken[ipTokenId].push(post);
+        }
+      }
+    }
+
+    // Calculate metrics per IP token
+    const metricsByIpToken = {};
+    for (const [ipTokenId, posts] of Object.entries(postsByIpToken)) {
+      const totalPosts = posts.length;
+      const totalLikes = posts.reduce((sum, p) => sum + (p.likes || 0), 0);
+      const totalComments = posts.reduce((sum, p) => sum + (p.comments || 0), 0);
+      const imagePosts = posts.filter(p => p.mediaType === 'image').length;
+      const videoPosts = posts.filter(p => p.mediaType === 'video').length;
+      const textPosts = posts.filter(p => p.mediaType === 'text').length;
+      const uniqueAuthors = new Set(posts.map(p => p.authorAddress)).size;
+      
+      // Get most recent post timestamp
+      const mostRecentPost = posts.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))[0];
+      const lastActivity = mostRecentPost ? mostRecentPost.timestamp : null;
+
+      metricsByIpToken[ipTokenId] = {
+        ipTokenId,
+        totalPosts,
+        totalLikes,
+        totalComments,
+        totalEngagement: totalLikes + totalComments,
+        imagePosts,
+        videoPosts,
+        textPosts,
+        uniqueAuthors,
+        lastActivity,
+        posts: posts.map(p => ({
+          blobId: p.blobId,
+          authorAddress: p.authorAddress,
+          timestamp: p.timestamp,
+          likes: p.likes,
+          comments: p.comments,
+          mediaType: p.mediaType,
+        })),
+      };
+    }
+
+    res.json({
+      success: true,
+      totalPosts: postsWithIpTokens.length,
+      posts: postsWithIpTokens,
+      metricsByIpToken,
+      summary: {
+        totalPosts: postsWithIpTokens.length,
+        totalIpTokens: Object.keys(postsByIpToken).filter(id => id !== 'general').length,
+        totalLikes: postsWithIpTokens.reduce((sum, p) => sum + (p.likes || 0), 0),
+        totalComments: postsWithIpTokens.reduce((sum, p) => sum + (p.comments || 0), 0),
+        totalEngagement: postsWithIpTokens.reduce((sum, p) => sum + (p.likes || 0) + (p.comments || 0), 0),
+        uniqueAuthors: new Set(postsWithIpTokens.map(p => p.authorAddress)).size,
+      },
+      timestamp: Date.now(),
+    });
+  } catch (error) {
+    logger.error('Error fetching posts for oracle metrics:', {
+      error: error?.message,
+      stack: error?.stack,
+      name: error?.name,
+    });
+    
+    res.status(500).json({
+      success: false,
+      error: {
+        message: error?.message || 'Failed to fetch posts for oracle metrics',
+        type: error?.name || 'UnknownError',
+      },
+      posts: [],
+      metricsByIpToken: {},
+      summary: {
+        totalPosts: 0,
+        totalIpTokens: 0,
+        totalLikes: 0,
+        totalComments: 0,
+        totalEngagement: 0,
+        uniqueAuthors: 0,
+      },
+    });
   }
 });
 
@@ -313,9 +484,102 @@ router.post('/:blobId/like', async (req, res, next) => {
 
     logger.info(`User ${userAddress} liking post ${blobId}`);
 
-    // Read the post
-    const post = await walrusService.readContribution(blobId);
+    // Read the post - try as contribution first, then as plain JSON
+    let post;
+    let actualBlobId = blobId;
+    
+    try {
+      post = await walrusService.readContribution(blobId);
+    } catch (error) {
+      // If readContribution fails, try reading as plain blob
+      try {
+        const blobData = await walrusService.readBlob(blobId);
+        
+        // Check if it's binary data (media file) or JSON
+        const jsonData = blobData.toString('utf-8');
+        
+        // Try to parse as JSON
+        try {
+          post = JSON.parse(jsonData);
+        } catch (parseError) {
+          // It's likely binary media data, not a post
+          // Try to find the post that references this media blobId
+          logger.info(`Blob ${blobId} appears to be media, searching for post that references it...`);
+          
+          let foundPost = null;
+          const searchBlobIds = new Set();
+          
+          // First, get all blob IDs from the contract (most reliable)
+          try {
+            const contractBlobs = await contractService.getAllBlobs();
+            for (const contractBlob of contractBlobs) {
+              searchBlobIds.add(contractBlob.blobId);
+            }
+            logger.info(`Found ${searchBlobIds.size} blob IDs from contract to search`);
+          } catch (contractError) {
+            logger.warn('Could not get blob IDs from contract, using index only:', contractError.message);
+          }
+          
+          // Also add blob IDs from the indexer
+          for (const [ipTokenId, blobIds] of indexerService.index.entries()) {
+            for (const postBlobId of blobIds) {
+              searchBlobIds.add(postBlobId);
+            }
+          }
+          
+          logger.info(`Searching through ${searchBlobIds.size} blob IDs for post referencing media ${blobId}`);
+          
+          // Search through all blob IDs
+          for (const postBlobId of searchBlobIds) {
+            try {
+              const candidatePost = await walrusService.readContribution(postBlobId);
+              if (candidatePost.mediaBlobId === blobId || candidatePost.media_blob_id === blobId) {
+                foundPost = candidatePost;
+                actualBlobId = postBlobId;
+                logger.info(`Found post ${postBlobId} that references media ${blobId}`);
+                break;
+              }
+            } catch (e) {
+              // Try reading as plain JSON
+              try {
+                const candidateBlobData = await walrusService.readBlob(postBlobId);
+                const candidateJson = candidateBlobData.toString('utf-8');
+                // Check if it's binary before trying to parse
+                if (candidateJson.length > 0 && !candidateJson.includes('\x00')) {
+                  const candidatePost = JSON.parse(candidateJson);
+                  if (candidatePost.mediaBlobId === blobId || candidatePost.media_blob_id === blobId) {
+                    foundPost = candidatePost;
+                    actualBlobId = postBlobId;
+                    logger.info(`Found post ${postBlobId} that references media ${blobId}`);
+                    break;
+                  }
+                }
+              } catch (e2) {
+                // Skip this blob
+              }
+            }
+          }
+          
+          if (!foundPost) {
+            logger.error(`Could not find post for blobId ${blobId} (appears to be media)`);
+            return res.status(404).json({
+              success: false,
+              error: 'Post not found. The blobId may be for media, not the post data.',
+            });
+          }
+          
+          post = foundPost;
+        }
+      } catch (readError) {
+        logger.error(`Error reading post ${blobId}:`, readError);
+        return res.status(404).json({
+          success: false,
+          error: 'Post not found',
+        });
+      }
+    }
 
+    // Accept posts with either post_type or engagement_type
     if (post.post_type !== 'discover_post' && post.engagement_type !== 'post') {
       return res.status(404).json({
         success: false,
@@ -338,16 +602,17 @@ router.post('/:blobId/like', async (req, res, next) => {
       post.likes = (post.likes || 0) + 1;
     }
 
-    // Store updated post back to Walrus
+    // Store updated post back to Walrus using the actual post blobId
     // Note: This creates a new blob. In production, you might want to use a different approach
     // like storing likes/comments separately or using on-chain storage
     const updated = await walrusService.storeContribution(post);
+    const newBlobId = updated.walrus_blob_id || updated.walrus_cid || actualBlobId;
 
     res.json({
       success: true,
       liked: !isLiked,
       likes: post.likes,
-      blobId: updated.walrus_blob_id || updated.walrus_cid,
+      blobId: newBlobId,
     });
   } catch (error) {
     logger.error(`Error liking post ${req.params.blobId}:`, error);
@@ -373,9 +638,102 @@ router.post('/:blobId/comment', async (req, res, next) => {
 
     logger.info(`User ${userAddress} commenting on post ${blobId}`);
 
-    // Read the post
-    const post = await walrusService.readContribution(blobId);
+    // Read the post - try as contribution first, then as plain JSON
+    let post;
+    let actualBlobId = blobId;
+    
+    try {
+      post = await walrusService.readContribution(blobId);
+    } catch (error) {
+      // If readContribution fails, try reading as plain blob
+      try {
+        const blobData = await walrusService.readBlob(blobId);
+        
+        // Check if it's binary data (media file) or JSON
+        const jsonData = blobData.toString('utf-8');
+        
+        // Try to parse as JSON
+        try {
+          post = JSON.parse(jsonData);
+        } catch (parseError) {
+          // It's likely binary media data, not a post
+          // Try to find the post that references this media blobId
+          logger.info(`Blob ${blobId} appears to be media, searching for post that references it...`);
+          
+          let foundPost = null;
+          const searchBlobIds = new Set();
+          
+          // First, get all blob IDs from the contract (most reliable)
+          try {
+            const contractBlobs = await contractService.getAllBlobs();
+            for (const contractBlob of contractBlobs) {
+              searchBlobIds.add(contractBlob.blobId);
+            }
+            logger.info(`Found ${searchBlobIds.size} blob IDs from contract to search`);
+          } catch (contractError) {
+            logger.warn('Could not get blob IDs from contract, using index only:', contractError.message);
+          }
+          
+          // Also add blob IDs from the indexer
+          for (const [ipTokenId, blobIds] of indexerService.index.entries()) {
+            for (const postBlobId of blobIds) {
+              searchBlobIds.add(postBlobId);
+            }
+          }
+          
+          logger.info(`Searching through ${searchBlobIds.size} blob IDs for post referencing media ${blobId}`);
+          
+          // Search through all blob IDs
+          for (const postBlobId of searchBlobIds) {
+            try {
+              const candidatePost = await walrusService.readContribution(postBlobId);
+              if (candidatePost.mediaBlobId === blobId || candidatePost.media_blob_id === blobId) {
+                foundPost = candidatePost;
+                actualBlobId = postBlobId;
+                logger.info(`Found post ${postBlobId} that references media ${blobId}`);
+                break;
+              }
+            } catch (e) {
+              // Try reading as plain JSON
+              try {
+                const candidateBlobData = await walrusService.readBlob(postBlobId);
+                const candidateJson = candidateBlobData.toString('utf-8');
+                // Check if it's binary before trying to parse
+                if (candidateJson.length > 0 && !candidateJson.includes('\x00')) {
+                  const candidatePost = JSON.parse(candidateJson);
+                  if (candidatePost.mediaBlobId === blobId || candidatePost.media_blob_id === blobId) {
+                    foundPost = candidatePost;
+                    actualBlobId = postBlobId;
+                    logger.info(`Found post ${postBlobId} that references media ${blobId}`);
+                    break;
+                  }
+                }
+              } catch (e2) {
+                // Skip this blob
+              }
+            }
+          }
+          
+          if (!foundPost) {
+            logger.error(`Could not find post for blobId ${blobId} (appears to be media)`);
+            return res.status(404).json({
+              success: false,
+              error: 'Post not found. The blobId may be for media, not the post data.',
+            });
+          }
+          
+          post = foundPost;
+        }
+      } catch (readError) {
+        logger.error(`Error reading post ${blobId}:`, readError);
+        return res.status(404).json({
+          success: false,
+          error: 'Post not found',
+        });
+      }
+    }
 
+    // Accept posts with either post_type or engagement_type
     if (post.post_type !== 'discover_post' && post.engagement_type !== 'post') {
       return res.status(404).json({
         success: false,
@@ -396,14 +754,15 @@ router.post('/:blobId/comment', async (req, res, next) => {
     post.commentsList = [...commentsList, newComment];
     post.comments = (post.comments || 0) + 1;
 
-    // Store updated post back to Walrus
+    // Store updated post back to Walrus using the actual post blobId
     const updated = await walrusService.storeContribution(post);
+    const newBlobId = updated.walrus_blob_id || updated.walrus_cid || actualBlobId;
 
     res.json({
       success: true,
       comment: newComment,
       comments: post.comments,
-      blobId: updated.walrus_blob_id || updated.walrus_cid,
+      blobId: newBlobId,
     });
   } catch (error) {
     logger.error(`Error commenting on post ${req.params.blobId}:`, error);

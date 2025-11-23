@@ -385,7 +385,7 @@ public fun execute_sell_order(
 
 /// Cancel an order
 /// Only the order creator can cancel their own order
-public fun cancel_order(
+public entry fun cancel_order(
     _marketplace: &mut Marketplace,
     order: &mut MarketOrder,
     sender: address,

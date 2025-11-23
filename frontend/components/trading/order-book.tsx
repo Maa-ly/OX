@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { CustomSelect } from "@/components/ui/custom-select";
+import { getMarketPrice } from "@/lib/utils/contract-read";
 
 interface OrderBookEntry {
   price: number;
@@ -9,8 +10,14 @@ interface OrderBookEntry {
   total: number;
 }
 
-export function OrderBook() {
+interface OrderBookProps {
+  tokenId: string;
+  currentPrice: number;
+}
+
+export function OrderBook({ tokenId, currentPrice }: OrderBookProps) {
   const [precision, setPrecision] = useState(2);
+  const [marketPrice, setMarketPrice] = useState<{ highestBid: number; lowestAsk: number } | null>(null);
 
   // Generate mock order book data with function initializer
   const generateOrders = (
@@ -26,8 +33,29 @@ export function OrderBook() {
     });
   };
 
-  const [bids] = useState<OrderBookEntry[]>(() => generateOrders(37.7, true));
-  const [asks] = useState<OrderBookEntry[]>(() => generateOrders(37.8, false));
+  // Use market price if available, otherwise use current price
+  const basePrice = marketPrice?.lowestAsk || marketPrice?.highestBid || currentPrice || 0;
+  const [bids] = useState<OrderBookEntry[]>(() => generateOrders(basePrice * 0.99, true));
+  const [asks] = useState<OrderBookEntry[]>(() => generateOrders(basePrice * 1.01, false));
+
+  // Fetch market price
+  useEffect(() => {
+    const fetchMarketPrice = async () => {
+      try {
+        const price = await getMarketPrice(tokenId);
+        setMarketPrice(price);
+      } catch (error) {
+        console.error("Error fetching market price:", error);
+      }
+    };
+
+    if (tokenId) {
+      fetchMarketPrice();
+      // Refresh every 5 seconds
+      const interval = setInterval(fetchMarketPrice, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [tokenId]);
 
   const maxTotal = Math.max(
     ...bids.map((b) => b.total),
@@ -53,7 +81,7 @@ export function OrderBook() {
 
       {/* Column Headers */}
       <div className="grid grid-cols-3 gap-2 px-3 py-2 text-xs text-zinc-500 border-b border-zinc-800">
-        <div className="text-left">Price(USDC)</div>
+        <div className="text-left">Price(SUI)</div>
         <div className="text-right">Amount</div>
         <div className="text-right">Total</div>
       </div>
@@ -86,13 +114,19 @@ export function OrderBook() {
         {/* Spread */}
         <div className="sticky top-0 bg-zinc-900 border-y border-zinc-800 px-3 py-2 text-center">
           <div className="text-lg font-bold text-cyan-400">
-            {bids[0] ? bids[0].price.toFixed(precision) : "0.00"}
+            {marketPrice?.lowestAsk 
+              ? marketPrice.lowestAsk.toFixed(6)
+              : bids[0] 
+              ? bids[0].price.toFixed(precision) 
+              : "0.00"}
           </div>
           <div className="text-xs text-zinc-500">
             Spread:{" "}
-            {asks[0] && bids[0]
+            {marketPrice?.lowestAsk && marketPrice?.highestBid
+              ? (marketPrice.lowestAsk - marketPrice.highestBid).toFixed(6)
+              : asks[0] && bids[0]
               ? (asks[0].price - bids[0].price).toFixed(precision)
-              : "0.00"}
+              : "0.00"} SUI
           </div>
         </div>
 

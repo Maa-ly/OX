@@ -1,6 +1,7 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { readFile, writeFile, unlink } from 'fs/promises';
+import { readFile, writeFile, unlink, access } from 'fs/promises';
+import { constants } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { config } from '../config/config.js';

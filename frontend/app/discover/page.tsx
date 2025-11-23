@@ -11,7 +11,7 @@ import { useWalletAuth } from "@/lib/hooks/useWalletAuth";
 import { useZkLogin } from "@/lib/hooks/useZkLogin";
 import { useAuthStore } from "@/lib/stores/auth-store";
 import { ErrorModal, SuccessModal } from "@/components/shared/modal";
-import { splitWALCoins } from "@/lib/utils/walrus-sdk";
+import { getUserProfile, getDisplayName, getProfilesForAddresses, type UserProfile } from "@/lib/utils/user-profile";
 
 const NavWalletButton = dynamic(
   () =>
@@ -75,8 +75,6 @@ function DiscoverPageContent() {
     message: '',
   });
   
-  // Split coins state
-  const [splittingCoins, setSplittingCoins] = useState(false);
 
   // Load IP tokens and posts
   useEffect(() => {
@@ -121,88 +119,187 @@ function DiscoverPageContent() {
         console.warn('[loadPosts] Error fetching blobs from contract:', error);
       }
       
-      const { readBlobFromWalrus } = await import('@/lib/utils/walrus');
-      
-      // Fetch posts from contract blobs only
+      // Process contract blobs - use blobId to create Walrus aggregator URL (like test user)
       const postsFromStorage: Post[] = [];
+      const aggregatorUrl = 'https://aggregator.walrus-testnet.walrus.space';
       
       for (const contractBlob of contractBlobs) {
         try {
-          const blobData = await readBlobFromWalrus(contractBlob.blobId, false);
+          // Create the blob URL using the blobId (same pattern as test user)
+          // Browser will handle content type sniffing (image, video, text, etc.)
+          const blobUrl = `${aggregatorUrl}/v1/blobs/${contractBlob.blobId}`;
           
-          // Parse blob data
-          let postData: any = null;
-          if (typeof blobData === 'object' && blobData !== null) {
-            if (blobData.content && typeof blobData.content === 'string') {
-              // Check if content is binary/image data
-              const contentStr = blobData.content;
-              if (contentStr.startsWith('RIFF') || contentStr.startsWith('\x89PNG') || 
-                  contentStr.startsWith('GIF') || contentStr.startsWith('ÿØÿà')) {
-                // It's binary image data - create a post object with image URL
-                const aggregatorUrl = 'https://aggregator.walrus-testnet.walrus.space';
-                const imageUrl = `${aggregatorUrl}/v1/blobs/${contractBlob.blobId}`;
-                postData = {
-                  content: contractBlob.text || '',
-                  mediaUrl: imageUrl,
-                  mediaType: 'image',
-                  author: 'Unknown',
-                  authorAddress: '0x0000000000000000000000000000000000000000',
-                  timestamp: contractBlob.timestamp || Date.now(),
-                };
-              } else {
-                // Try to parse as JSON
-                try {
-                  postData = JSON.parse(blobData.content);
-                  // Override with contract text if available
-                  if (contractBlob.text) {
-                    postData.content = contractBlob.text;
+          // New strategy: 
+          // - If contract has text: blobId is media (image/video), text is caption
+          // - If contract has no text: blobId might be text-only post, fetch and check
+          let postData: any = {};
+          let isMediaPost = false;
+          
+          if (contractBlob.text) {
+            // Contract has text → blobId is media, text is caption
+            isMediaPost = true;
+            postData.mediaUrl = blobUrl;
+            postData.mediaType = 'image'; // Browser will handle content type (image/video)
+            console.log(`[loadPosts] Contract blob ${contractBlob.blobId} has text, treating as media post with caption`);
+          } else {
+            // No text from contract → might be text-only post, try to fetch
+            try {
+              const { readBlobFromWalrus } = await import('@/lib/utils/walrus');
+              const blobData = await readBlobFromWalrus(contractBlob.blobId, false);
+              
+              // Check if it's JSON post data (legacy format)
+              if (typeof blobData === 'object' && blobData !== null && blobData.content) {
+                // Check if content is binary/image data BEFORE trying to parse
+                const contentStr = typeof blobData.content === 'string' ? blobData.content : String(blobData.content);
+                const isBinaryImage = contentStr.startsWith('RIFF') || 
+                                      contentStr.startsWith('\x89PNG') || 
+                                      contentStr.startsWith('GIF') || 
+                                      contentStr.startsWith('ÿØÿà') ||
+                                      contentStr.startsWith('\xFF\xD8\xFF') ||
+                                      contentStr.includes('\x00') || // Null bytes indicate binary
+                                      (contentStr.length > 100 && contentStr.match(/[^\x20-\x7E\n\r\t]/)); // Non-printable chars
+                
+                if (isBinaryImage) {
+                  // It's binary image data - treat as media
+                  isMediaPost = true;
+                  postData.mediaUrl = blobUrl;
+                  postData.mediaType = 'image';
+                  postData.content = ''; // Don't set binary data as content
+                  console.log(`[loadPosts] Detected binary image data in blob ${contractBlob.blobId}`);
+                } else {
+                  // Try to parse as JSON
+                  try {
+                    postData = JSON.parse(contentStr);
+                    // If JSON post has a mediaBlobId, use that for the media URL
+                    if (postData.mediaBlobId) {
+                      postData.mediaUrl = `${aggregatorUrl}/v1/blobs/${postData.mediaBlobId}`;
+                      postData.mediaType = postData.mediaType || 'image';
+                      isMediaPost = true;
+                    } else {
+                      // Text-only JSON post
+                      postData.content = postData.content || '';
+                    }
+                  } catch {
+                    // Not JSON - use as plain text (but only if it's not binary)
+                    postData.content = contentStr;
                   }
-                } catch {
-                  postData = { 
-                    content: contractBlob.text || blobData.content,
-                    timestamp: contractBlob.timestamp || Date.now(),
-                  };
+                }
+              } else if (typeof blobData === 'object' && blobData !== null) {
+                // Already parsed JSON
+                postData = blobData;
+                if (postData.mediaBlobId) {
+                  postData.mediaUrl = `${aggregatorUrl}/v1/blobs/${postData.mediaBlobId}`;
+                  postData.mediaType = postData.mediaType || 'image';
+                  isMediaPost = true;
+                }
+              } else {
+                // Plain text - check if it's binary first
+                const dataStr = String(blobData);
+                const isBinaryImage = dataStr.startsWith('RIFF') || 
+                                      dataStr.startsWith('\x89PNG') || 
+                                      dataStr.startsWith('GIF') || 
+                                      dataStr.startsWith('ÿØÿà') ||
+                                      dataStr.startsWith('\xFF\xD8\xFF') ||
+                                      dataStr.includes('\x00') ||
+                                      (dataStr.length > 100 && dataStr.match(/[^\x20-\x7E\n\r\t]/));
+                
+                if (isBinaryImage) {
+                  // It's binary - treat as media
+                  isMediaPost = true;
+                  postData.mediaUrl = blobUrl;
+                  postData.mediaType = 'image';
+                  postData.content = ''; // Don't set binary data as content
+                } else {
+                  postData.content = dataStr;
                 }
               }
-            } else {
-              postData = blobData;
-              if (contractBlob.text) {
-                postData.content = contractBlob.text;
-              }
+            } catch (fetchError) {
+              // If we can't fetch, assume it's media (browser will handle it)
+              console.log(`[loadPosts] Could not fetch blob ${contractBlob.blobId}, assuming media`);
+              isMediaPost = true;
+              postData.mediaUrl = blobUrl;
+              postData.mediaType = 'image';
             }
-          } else {
-            postData = { 
-              content: contractBlob.text || blobData,
-              timestamp: contractBlob.timestamp || Date.now(),
-            };
           }
           
-          // Ensure required fields exist
-          if (postData && (postData.post_type === 'discover_post' || 
-              postData.engagement_type === 'post' || 
-              postData.type === 'post' ||
-              postData.content || postData.mediaUrl)) {
-            postsFromStorage.push({
-              id: contractBlob.blobId,
-              blobId: contractBlob.blobId,
-              author: postData.author || postData.authorAddress?.slice(0, 6) + '...' + postData.authorAddress?.slice(-4) || 'Unknown',
-              authorAddress: postData.authorAddress || '0x0000000000000000000000000000000000000000',
-              content: postData.content || '',
-              mediaType: postData.mediaType || (postData.mediaUrl ? 'image' : 'text'),
-              mediaUrl: postData.mediaUrl,
-              ipTokenIds: postData.ipTokenIds || [],
-              likes: postData.likes || 0,
-              comments: postData.comments || 0,
-              timestamp: postData.timestamp || contractBlob.timestamp || Date.now(),
-              tags: postData.tags || [],
+          // Create post object
+          // Priority: contract text > postData content > empty
+          // Make sure we never set binary data as content
+          let finalContent = contractBlob.text || postData.content || '';
+          
+          // Double-check: if content looks like binary data, clear it
+          if (finalContent && typeof finalContent === 'string' && finalContent.length > 0) {
+            const mightBeBinary = finalContent.includes('\x00') || 
+                                  (finalContent.length > 100 && finalContent.match(/[^\x20-\x7E\n\r\t]/));
+            if (mightBeBinary && !contractBlob.text) {
+              // Only clear if it's not from contract (contract text is safe)
+              console.warn(`[loadPosts] Detected potential binary data in content for blob ${contractBlob.blobId}, clearing it`);
+              finalContent = '';
+            }
+          }
+          
+          const post: Post = {
+            id: contractBlob.blobId,
+            blobId: contractBlob.blobId,
+            author: postData.author || 'Unknown',
+            authorAddress: postData.authorAddress || '0x0000000000000000000000000000000000000000',
+            content: finalContent,
+            mediaUrl: postData.mediaUrl,
+            mediaBlobId: postData.mediaBlobId || postData.media_blob_id,
+            mediaType: postData.mediaType || postData.media_type || (isMediaPost ? 'image' : undefined),
+            timestamp: contractBlob.timestamp || postData.timestamp || Date.now(),
+            ipTokenIds: postData.ipTokenIds || [],
+            likes: postData.likes || 0,
+            comments: postData.comments || 0,
+            tags: postData.tags || [],
+          };
+          
+          // Always show the post if we have content or media
+          if (post.content || post.mediaUrl) {
+            postsFromStorage.push(post);
+            console.log(`[loadPosts] Added post from contract blob ${contractBlob.blobId}:`, {
+              hasText: !!post.content,
+              hasMedia: !!post.mediaUrl,
+              mediaType: post.mediaType,
+              isMediaPost,
             });
           }
         } catch (error) {
-          console.warn(`[loadPosts] Failed to load blob ${contractBlob.blobId}:`, error);
+          console.warn(`[loadPosts] Failed to process contract blob ${contractBlob.blobId}:`, error);
         }
       }
       
       console.log('[loadPosts] Posts from contract:', postsFromStorage.length);
+      
+      // Fetch post metadata (likes/comments) for each post from Walrus
+      // This ensures we have the latest engagement data
+      const postsWithMetadata = await Promise.all(
+        postsFromStorage.map(async (post) => {
+          try {
+            // Try to fetch the full post data from Walrus to get likes/comments
+            const { readBlobFromWalrus } = await import('@/lib/utils/walrus');
+            const blobData = await readBlobFromWalrus(post.blobId, false);
+            
+            if (typeof blobData === 'object' && blobData !== null) {
+              // Update likes/comments from Walrus data if available
+              if (typeof blobData.likes === 'number') {
+                post.likes = blobData.likes;
+              }
+              if (typeof blobData.comments === 'number') {
+                post.comments = blobData.comments;
+              }
+            }
+          } catch (error) {
+            // If we can't fetch metadata, keep the default values (0)
+            console.log(`[loadPosts] Could not fetch metadata for post ${post.blobId}, using defaults`);
+          }
+          return post;
+        })
+      );
+      
+      // Replace posts with metadata-enriched posts
+      postsFromStorage.length = 0;
+      postsFromStorage.push(...postsWithMetadata);
       
       let result;
       
@@ -259,6 +356,33 @@ function DiscoverPageContent() {
         total: result.total, 
         postsCount: result.posts.length,
         posts: result.posts.map(p => ({ id: p.id, blobId: p.blobId, content: p.content?.substring(0, 50) }))
+      });
+      
+      // Fetch user profiles for all post authors
+      const authorAddresses = new Set<string>();
+      result.posts.forEach(post => {
+        if (post.authorAddress && post.authorAddress !== '0x0000000000000000000000000000000000000000') {
+          authorAddresses.add(post.authorAddress);
+        }
+      });
+      
+      console.log('[loadPosts] Fetching profiles for', authorAddresses.size, 'authors');
+      const profiles = await getProfilesForAddresses(Array.from(authorAddresses));
+      
+      // Update posts with profile information
+      result.posts = result.posts.map(post => {
+        const profile = profiles.get(post.authorAddress || '');
+        if (profile) {
+          // Use username if available, otherwise use formatted address
+          const displayName = getDisplayName(profile, post.authorAddress || '');
+          return {
+            ...post,
+            author: displayName,
+            // Store profile for later use in display
+            profile: profile,
+          };
+        }
+        return post;
       });
       
       // HARDCODED TEST: Try to fetch a specific blob ID for testing
@@ -431,93 +555,129 @@ function DiscoverPageContent() {
       // This method uploads directly to Walrus without requiring transaction building
       const { storeBlobWithHttpApi } = await import('@/lib/utils/walrus-sdk');
 
-      let mediaBlobId: string | null = null;
+      let blobId: string;
+      let finalMediaBlobId: string | null = null;
 
-      // First, handle media file if present
+      // Strategy: 
+      // - If there's media: Store ONLY the media on Walrus, use text parameter in storeBlob for caption
+      // - If there's no media: Store text on Walrus, use text parameter in storeBlob
+      
       if (mediaFile) {
-      console.log('[handleSubmitPost] Uploading media via HTTP API...');
-      // Use epochs=5 like the working NFT project - shorter epochs may have different payment requirements
-      const mediaResult = await storeBlobWithHttpApi(mediaFile, currentAddress, {
-        epochs: 5, // Changed from 365 to match working implementation
-      });
-      mediaBlobId = mediaResult.blobId;
-      console.log('[handleSubmitPost] Media uploaded:', mediaBlobId);
-    }
+        // Post has media (image/video) - store ONLY the media on Walrus
+        console.log('[handleSubmitPost] Uploading media via HTTP API...');
+        const mediaResult = await storeBlobWithHttpApi(mediaFile, currentAddress, {
+          epochs: 5,
+        });
+        blobId = mediaResult.blobId;
+        finalMediaBlobId = mediaResult.blobId;
+        console.log('[handleSubmitPost] Media uploaded:', blobId);
+        console.log('[handleSubmitPost] Will store on-chain with media blobId and text caption');
+      } else if (newPost.trim()) {
+        // Post is text-only - store text on Walrus
+        console.log('[handleSubmitPost] Uploading text post via HTTP API...');
+        const textResult = await storeBlobWithHttpApi(newPost, currentAddress, {
+          epochs: 5,
+        });
+        blobId = textResult.blobId;
+        console.log('[handleSubmitPost] Text post uploaded:', blobId);
+        console.log('[handleSubmitPost] Will store on-chain with text blobId and text');
+      } else {
+        throw new Error('Post must have either text or media');
+      }
 
-    // Create post object
-    const postData = {
-      content: newPost,
-      mediaType: mediaType,
-      mediaBlobId: mediaBlobId, // Include media blob ID if present
-      ipTokenIds: selectedIPTokens,
-      author: currentAddress.slice(0, 6) + "..." + currentAddress.slice(-4),
-      authorAddress: currentAddress,
-      timestamp: Date.now(),
-      tags: [],
-    };
-
-    // Upload post data via HTTP API
-    const postDataJson = JSON.stringify({
-      post_type: 'discover_post',
-      engagement_type: 'post',
-      ...postData,
-      likes: 0,
-      comments: 0,
-      likesList: [],
-      commentsList: [],
-    });
-
-    console.log('[handleSubmitPost] Uploading post data via HTTP API...');
-    // Use epochs=5 like the working NFT project - shorter epochs may have different payment requirements
-    const postResult = await storeBlobWithHttpApi(postDataJson, currentAddress, {
-      epochs: 5, // Changed from 365 to match working implementation
-    });
-    console.log('[handleSubmitPost] Post uploaded:', postResult.blobId);
-
-    // Store blob IDs for this user
-    // Blob is already stored on-chain via storeBlob contract call in storePost
-    if (mediaBlobId) {
-      // Media blob is stored on-chain via storeBlob contract call
-    }
-    console.log('[handleSubmitPost] Stored blob IDs for user:', { 
-      userAddress: currentAddress, 
-      postBlobId: postResult.blobId,
-      mediaBlobId: mediaBlobId || 'none'
-    });
-
-    // Index the post on backend so it can be fetched
-    // Use API_BASE_URL from constants (handles both NEXT_PUBLIC_API_BASE_URL and NEXT_PUBLIC_API_URL)
-    const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 
-                        process.env.NEXT_PUBLIC_API_URL || 
-                        (typeof window !== 'undefined' && window.location.origin.includes('vercel.app') 
-                          ? 'https://ox-backend.vercel.app' // Production backend URL
-                          : 'http://localhost:3001'); // Backend runs on port 3001
-    try {
-      console.log('[handleSubmitPost] Indexing post on backend...', { 
-        API_BASE_URL, 
-        env: {
-          API_BASE_URL: process.env.NEXT_PUBLIC_API_BASE_URL,
-          API_URL: process.env.NEXT_PUBLIC_API_URL,
+      // Store blob ID on-chain in the smart contract
+      // For media posts: blobId = media blobId, text = caption
+      // For text posts: blobId = text blobId, text = text content
+      if (wallet && wallet.connected) {
+        try {
+          const { storeBlob } = await import('@/lib/utils/contract');
+          console.log('[handleSubmitPost] Storing blob ID on-chain...', { 
+            blobId: blobId, 
+            hasText: !!newPost,
+            isMedia: !!mediaFile
+          });
+          
+          await storeBlob(
+            {
+              blobId: blobId,
+              text: newPost || undefined, // Store text as caption (for media) or content (for text posts)
+            },
+            wallet
+          );
+          console.log('[handleSubmitPost] Blob ID stored on-chain successfully');
+        } catch (contractError: any) {
+          console.error('[handleSubmitPost] Error storing blob on-chain:', contractError);
+          // Don't fail the entire upload if contract call fails - blob is still stored on Walrus
         }
+      } else {
+        console.warn('[handleSubmitPost] Wallet not connected - skipping on-chain blob storage. Post will still be available via backend indexing.');
+      }
+      
+      console.log('[handleSubmitPost] Stored blob for user:', { 
+        userAddress: currentAddress, 
+        blobId: blobId,
+        hasText: !!newPost,
+        hasMedia: !!mediaFile
       });
-      const indexResponse = await fetch(`${API_BASE_URL}/api/posts/index`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          blobId: postResult.blobId,
-          walrusResponse: postResult.walrusResponse, // Include full Walrus response
-          post: {
-            post_type: 'discover_post',
-            engagement_type: 'post',
-            ...postData,
-            likes: 0,
-            comments: 0,
-            likesList: [],
-            commentsList: [],
+
+      // Fetch current user's profile to get username
+      let userProfile: UserProfile | null = null;
+      try {
+        userProfile = await getUserProfile(currentAddress);
+      } catch (error) {
+        console.warn('[handleSubmitPost] Failed to fetch user profile:', error);
+      }
+      
+      // Use username if available, otherwise use formatted address
+      const authorName = userProfile 
+        ? getDisplayName(userProfile, currentAddress)
+        : (currentAddress.slice(0, 6) + "..." + currentAddress.slice(-4));
+
+      // Create post object for backend indexing
+      const postData = {
+        content: newPost,
+        mediaType: mediaType,
+        mediaBlobId: finalMediaBlobId, // Only set if there's media
+        ipTokenIds: selectedIPTokens,
+        author: authorName,
+        authorAddress: currentAddress,
+        timestamp: Date.now(),
+        tags: [],
+      };
+
+      // Index the post on backend so it can be fetched
+      // Use API_BASE_URL from constants (handles both NEXT_PUBLIC_API_BASE_URL and NEXT_PUBLIC_API_URL)
+      const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 
+                          process.env.NEXT_PUBLIC_API_URL || 
+                          (typeof window !== 'undefined' && window.location.origin.includes('vercel.app') 
+                            ? 'https://ox-backend.vercel.app' // Production backend URL
+                            : 'http://localhost:3001'); // Backend runs on port 3001
+      try {
+        console.log('[handleSubmitPost] Indexing post on backend...', { 
+          API_BASE_URL, 
+          env: {
+            API_BASE_URL: process.env.NEXT_PUBLIC_API_BASE_URL,
+            API_URL: process.env.NEXT_PUBLIC_API_URL,
+          }
+        });
+        const indexResponse = await fetch(`${API_BASE_URL}/api/posts/index`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
           },
-        }),
+          body: JSON.stringify({
+            blobId: blobId, // Use the actual blobId (media or text)
+            post: {
+              post_type: 'discover_post',
+              engagement_type: 'post',
+              ...postData,
+              likes: 0,
+              comments: 0,
+              likesList: [],
+              commentsList: [],
+            },
+            walrusResponse: undefined, // We don't store the full response anymore
+          }),
       });
 
       if (!indexResponse.ok) {
@@ -546,7 +706,7 @@ function DiscoverPageContent() {
         name: indexError?.name,
         cause: indexError?.cause,
         API_BASE_URL,
-        blobId: postResult.blobId,
+        blobId: blobId,
         note: 'Post was uploaded to Walrus successfully, but backend indexing failed. The post can be manually indexed later.',
       });
       // Don't throw - post was uploaded successfully, just indexing failed
@@ -777,12 +937,20 @@ function DiscoverPageContent() {
       const result = await likePost(post.blobId, currentAddress);
       
       // Update post in local state
+      // Note: blobId might change if the post was updated on Walrus
       setPosts((prev) =>
-        prev.map((p) =>
-          p.blobId === post.blobId
-            ? { ...p, likes: result.likes }
-            : p
-        )
+        prev.map((p) => {
+          if (p.blobId === post.blobId || p.id === post.blobId) {
+            return {
+              ...p,
+              likes: result.likes,
+              // Update blobId if it changed
+              blobId: result.blobId || p.blobId,
+              id: result.blobId || p.id,
+            };
+          }
+          return p;
+        })
       );
     } catch (error: any) {
       console.error("Failed to like post:", error);
@@ -820,12 +988,20 @@ function DiscoverPageContent() {
       );
 
       // Update post in local state
+      // Note: blobId might change if the post was updated on Walrus
       setPosts((prev) =>
-        prev.map((p) =>
-          p.blobId === post.blobId
-            ? { ...p, comments: result.comments }
-            : p
-        )
+        prev.map((p) => {
+          if (p.blobId === post.blobId || p.id === post.blobId) {
+            return {
+              ...p,
+              comments: result.comments,
+              // Update blobId if it changed
+              blobId: result.blobId || p.blobId,
+              id: result.blobId || p.id,
+            };
+          }
+          return p;
+        })
       );
 
       setCommentText("");
@@ -855,13 +1031,34 @@ function DiscoverPageContent() {
       const date = new Date(timestamp);
       const now = new Date();
       const diff = now.getTime() - date.getTime();
-      const hours = Math.floor(diff / (1000 * 60 * 60));
-      if (hours < 1) return "Just now";
-      if (hours < 24) return `${hours} hour${hours > 1 ? "s" : ""} ago`;
+      const seconds = Math.floor(diff / 1000);
+      const minutes = Math.floor(seconds / 60);
+      const hours = Math.floor(minutes / 60);
       const days = Math.floor(hours / 24);
-      return `${days} day${days > 1 ? "s" : ""} ago`;
+      const weeks = Math.floor(days / 7);
+      const months = Math.floor(days / 30);
+      const years = Math.floor(days / 365);
+
+      if (seconds < 60) return "Just now";
+      if (minutes < 60) return `${minutes} minute${minutes > 1 ? "s" : ""} ago`;
+      if (hours < 24) return `${hours} hour${hours > 1 ? "s" : ""} ago`;
+      if (days < 7) return `${days} day${days > 1 ? "s" : ""} ago`;
+      if (weeks < 4) return `${weeks} week${weeks > 1 ? "s" : ""} ago`;
+      if (months < 12) return `${months} month${months > 1 ? "s" : ""} ago`;
+      return `${years} year${years > 1 ? "s" : ""} ago`;
     }
     return timestamp;
+  };
+
+  const formatAddress = (address: string | undefined | null): string => {
+    if (!address || address === '0x0000000000000000000000000000000000000000') {
+      return 'Unknown';
+    }
+    // Format: 0x6df2...9c71
+    if (address.length > 10) {
+      return `${address.slice(0, 6)}...${address.slice(-4)}`;
+    }
+    return address;
   };
 
   return (
@@ -1007,47 +1204,6 @@ function DiscoverPageContent() {
               )}
             </div>
 
-            {/* Split Coins Button */}
-            {wallet && wallet.connected && (
-              <div className="mb-4 p-3 bg-zinc-800/50 border border-zinc-700 rounded-lg">
-                <button
-                  onClick={async () => {
-                    if (!wallet || !wallet.connected) {
-                      setErrorModal({ open: true, message: 'Please connect your wallet first' });
-                      return;
-                    }
-                    setSplittingCoins(true);
-                    try {
-                      const result = await splitWALCoins(wallet, {
-                        network: 'testnet',
-                        numSplits: 3,
-                        splitAmount: 0.1, // Split into 3 coins of 0.1 WAL each
-                      });
-                      setSuccessModal({ 
-                        open: true, 
-                        message: `${result.message}\nTransaction: ${result.digest.slice(0, 10)}...`
-                      });
-                    } catch (error: any) {
-                      setErrorModal({ 
-                        open: true, 
-                        message: 'Failed to split coins',
-                        details: error?.message || 'Unknown error occurred'
-                      });
-                    } finally {
-                      setSplittingCoins(false);
-                    }
-                  }}
-                  disabled={splittingCoins}
-                  className="w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {splittingCoins ? 'Splitting Coins...' : 'Split WAL Coins (Helps with Walrus uploads)'}
-                </button>
-                <p className="mt-1 text-xs text-zinc-500">
-                  Splits your WAL coins into smaller amounts to help Walrus find them
-                </p>
-              </div>
-            )}
-
             {/* Content Textarea */}
             <textarea
               value={newPost}
@@ -1110,7 +1266,7 @@ function DiscoverPageContent() {
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  className="p-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors"
+                  className="flex items-center gap-2 px-3 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors text-sm"
                   title="Upload Image or Video"
                 >
                   <svg
@@ -1123,9 +1279,10 @@ function DiscoverPageContent() {
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       strokeWidth={2}
-                      d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                      d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
                     />
                   </svg>
+                  <span className="text-zinc-300">Add Media</span>
                 </button>
               </div>
               <div className="flex flex-col gap-3">
@@ -1284,26 +1441,25 @@ function DiscoverPageContent() {
                 >
                   {/* Media */}
                   {(post.mediaUrl || post.mediaBlobId) && (
-                    <div className="aspect-video bg-zinc-950 relative overflow-hidden">
+                    <div className="bg-zinc-950 w-full flex items-center justify-center">
                       {post.mediaType === "image" ? (
-                        <Image
-                          src={post.mediaBlobId 
-                            ? `${process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001'}/api/walrus/read/${post.mediaBlobId}?format=raw`
-                            : post.mediaUrl || ''
+                        <img
+                          src={post.mediaUrl || (post.mediaBlobId 
+                            ? `https://aggregator.walrus-testnet.walrus.space/v1/blobs/${post.mediaBlobId}`
+                            : '')
                           }
-                          alt={post.content}
-                          fill
-                          className="object-cover"
-                          unoptimized
+                          alt={post.content || 'Post image'}
+                          className="w-full h-auto max-h-[80vh] object-contain"
+                          loading="lazy"
                         />
                       ) : (
                         <video
-                          src={post.mediaBlobId 
-                            ? `${process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001'}/api/walrus/read/${post.mediaBlobId}?format=raw`
-                            : post.mediaUrl || ''
+                          src={post.mediaUrl || (post.mediaBlobId 
+                            ? `https://aggregator.walrus-testnet.walrus.space/v1/blobs/${post.mediaBlobId}`
+                            : '')
                           }
                           controls
-                          className="w-full h-full object-cover"
+                          className="w-full h-auto max-h-[80vh] object-contain"
                         />
                       )}
                     </div>
@@ -1312,18 +1468,46 @@ function DiscoverPageContent() {
                   {/* Content */}
                   <div className="p-4">
                     <div className="flex items-center gap-3 mb-3">
-                      <div className="w-10 h-10 rounded-full bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center font-bold">
-                        {post.author?.[0] || '?'}
-                      </div>
+                      {(() => {
+                        const profile = (post as any).profile as UserProfile | undefined;
+                        const profilePictureUrl = profile?.profilePicture 
+                          ? `https://aggregator.walrus-testnet.walrus.space/v1/blobs/${profile.profilePicture}`
+                          : null;
+                        
+                        if (profilePictureUrl) {
+                          return (
+                            <img
+                              src={profilePictureUrl}
+                              alt={post.author || 'User'}
+                              className="w-10 h-10 rounded-full object-cover border border-cyan-500/30"
+                              onError={(e) => {
+                                // Hide image and show avatar on error
+                                (e.target as HTMLImageElement).style.display = 'none';
+                              }}
+                            />
+                          );
+                        }
+                        return (
+                          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center font-bold text-white">
+                            {post.author?.[0]?.toUpperCase() || (post.authorAddress 
+                              ? (post.authorAddress.slice(2, 3).toUpperCase() || '?')
+                              : '?')}
+                          </div>
+                        );
+                      })()}
                       <div className="flex-1">
-                        <div className="font-semibold">{post.author || 'Unknown'}</div>
+                        <div className="font-semibold">
+                          {post.author || (post.authorAddress ? formatAddress(post.authorAddress) : 'Unknown')}
+                        </div>
                         <div className="text-xs text-zinc-500">
                           {formatTimestamp(post.timestamp)}
                         </div>
                       </div>
                     </div>
 
-                    <p className="text-sm mb-3">{post.content}</p>
+                    {post.content && post.content.trim() && (
+                      <p className="text-sm mb-3">{post.content}</p>
+                    )}
 
                     {/* IP Tokens */}
                     {postTokens.length > 0 && (

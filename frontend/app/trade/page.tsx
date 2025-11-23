@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import Image from "next/image";
@@ -11,6 +11,8 @@ import {
   PositionsPanel,
 } from "@/components/trading";
 import { MobileBottomNav, MobileSidebar } from "@/components/mobile-nav";
+import { getIPTokens, type IPToken } from "@/lib/utils/api";
+import { CustomSelect } from "@/components/ui/custom-select";
 
 const NavWalletButton = dynamic(
   () =>
@@ -21,6 +23,7 @@ const NavWalletButton = dynamic(
 );
 
 interface Token {
+  id: string;
   symbol: string;
   name: string;
   price: number;
@@ -30,21 +33,62 @@ interface Token {
 }
 
 export default function TradePage() {
-  const [selectedToken] = useState<Token>({
-    symbol: "NARUTO",
-    name: "Naruto",
-    price: 37.706,
-    change24h: -0.66,
-    volume24h: 103951486.12,
-    marketCap: 12714962997,
-  });
-
-  const [tradeMode, setTradeMode] = useState<"spot" | "perpetual">("spot");
+  const [tokens, setTokens] = useState<IPToken[]>([]);
+  const [selectedToken, setSelectedToken] = useState<Token | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [tradeMode, setTradeMode] = useState<"spot" | "perpetual">("perpetual");
   const [activeTab, setActiveTab] = useState<
     "positions" | "orders" | "history"
   >("positions");
   const [isChartFullscreen, setIsChartFullscreen] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  // Load IP tokens on mount
+  useEffect(() => {
+    const loadTokens = async () => {
+      try {
+        setLoading(true);
+        const ipTokens = await getIPTokens(true);
+        setTokens(ipTokens);
+
+        // Transform first token to selected token format
+        if (ipTokens.length > 0) {
+          const firstToken = ipTokens[0];
+          setSelectedToken({
+            id: firstToken.id,
+            symbol: firstToken.symbol,
+            name: firstToken.name,
+            price: (firstToken.currentPrice || 0) / 1e9, // Convert from MIST to SUI
+            change24h: firstToken.priceChange24h || 0,
+            volume24h: 0, // TODO: Fetch from oracle
+            marketCap: (firstToken.currentPrice || 0) * (firstToken.circulatingSupply || 0) / 1e18, // Approximate
+          });
+        }
+      } catch (error) {
+        console.error("Error loading tokens:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadTokens();
+  }, []);
+
+  // Handle token selection
+  const handleTokenSelect = (tokenId: string) => {
+    const token = tokens.find((t) => t.id === tokenId);
+    if (token) {
+      setSelectedToken({
+        id: token.id,
+        symbol: token.symbol,
+        name: token.name,
+        price: (token.currentPrice || 0) / 1e9,
+        change24h: token.priceChange24h || 0,
+        volume24h: 0, // TODO: Fetch from oracle
+        marketCap: (token.currentPrice || 0) * (token.circulatingSupply || 0) / 1e18,
+      });
+    }
+  };
 
   return (
     <div className="min-h-screen bg-[#0a0a0f] text-white pb-20 md:pb-0">
@@ -140,58 +184,82 @@ export default function TradePage() {
           <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
             <div className="flex items-center gap-4 lg:gap-6 overflow-x-auto w-full lg:w-auto">
               <div className="shrink-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-lg lg:text-xl font-bold">
-                    {selectedToken.symbol}/USDC
-                  </span>
-                  <span
-                    className={`text-xs px-2 py-1 rounded ${
-                      tradeMode === "spot"
-                        ? "bg-cyan-500/20 text-cyan-400"
-                        : "bg-purple-500/20 text-purple-400"
-                    }`}
-                  >
-                    {tradeMode === "spot" ? "Spot" : "Perpetual"}
-                  </span>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {/* Token Selector */}
+                  {tokens.length > 0 && (
+                    <CustomSelect
+                      value={selectedToken?.id || ""}
+                      onChange={handleTokenSelect}
+                      options={tokens.map((token) => ({
+                        value: token.id,
+                        label: `${token.symbol} - ${token.name}`,
+                      }))}
+                      className="w-48 mr-2"
+                    />
+                  )}
+                  {selectedToken && (
+                    <>
+                      <span className="text-lg lg:text-xl font-bold">
+                        {selectedToken.symbol}/SUI
+                      </span>
+                      <span
+                        className={`text-xs px-2 py-1 rounded ${
+                          tradeMode === "spot"
+                            ? "bg-cyan-500/20 text-cyan-400"
+                            : "bg-purple-500/20 text-purple-400"
+                        }`}
+                      >
+                        {tradeMode === "spot" ? "Spot" : "Perpetual"}
+                      </span>
+                    </>
+                  )}
                 </div>
-                <div className="text-xs text-zinc-500">
-                  {selectedToken.name}
-                </div>
+                {selectedToken && (
+                  <div className="text-xs text-zinc-500">
+                    {selectedToken.name}
+                  </div>
+                )}
               </div>
 
-              <div className="flex items-center gap-4 lg:gap-6 text-xs lg:text-sm">
-                <div>
-                  <div className="text-zinc-400">Price</div>
-                  <div className="font-semibold">
-                    ${selectedToken.price.toFixed(3)}
+              {selectedToken && (
+                <div className="flex items-center gap-4 lg:gap-6 text-xs lg:text-sm">
+                  <div>
+                    <div className="text-zinc-400">Price</div>
+                    <div className="font-semibold">
+                      {selectedToken.price.toFixed(6)} SUI
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-zinc-400">24h Change</div>
+                    <div
+                      className={
+                        selectedToken.change24h >= 0
+                          ? "text-green-400"
+                          : "text-red-400"
+                      }
+                    >
+                      {selectedToken.change24h >= 0 ? "+" : ""}
+                      {selectedToken.change24h.toFixed(2)}%
+                    </div>
+                  </div>
+                  <div className="hidden sm:block">
+                    <div className="text-zinc-400">24h Volume</div>
+                    <div className="font-semibold">
+                      {selectedToken.volume24h > 0
+                        ? `${(selectedToken.volume24h / 1000000).toFixed(2)}M SUI`
+                        : "N/A"}
+                    </div>
+                  </div>
+                  <div className="hidden md:block">
+                    <div className="text-zinc-400">Market Cap</div>
+                    <div className="font-semibold">
+                      {selectedToken.marketCap > 0
+                        ? `${(selectedToken.marketCap / 1000000).toFixed(2)}M SUI`
+                        : "N/A"}
+                    </div>
                   </div>
                 </div>
-                <div>
-                  <div className="text-zinc-400">24h Change</div>
-                  <div
-                    className={
-                      selectedToken.change24h >= 0
-                        ? "text-green-400"
-                        : "text-red-400"
-                    }
-                  >
-                    {selectedToken.change24h >= 0 ? "+" : ""}
-                    {selectedToken.change24h.toFixed(2)}%
-                  </div>
-                </div>
-                <div className="hidden sm:block">
-                  <div className="text-zinc-400">24h Volume</div>
-                  <div className="font-semibold">
-                    ${(selectedToken.volume24h / 1000000).toFixed(2)}M
-                  </div>
-                </div>
-                <div className="hidden md:block">
-                  <div className="text-zinc-400">Market Cap</div>
-                  <div className="font-semibold">
-                    ${(selectedToken.marketCap / 1000000).toFixed(2)}M
-                  </div>
-                </div>
-              </div>
+              )}
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
@@ -229,7 +297,11 @@ export default function TradePage() {
             {/* Left Panel - Order Book (hidden on mobile or in fullscreen) */}
             {!isChartFullscreen && (
               <div className="hidden lg:block lg:col-span-2 border-r border-zinc-800 overflow-y-auto">
-                <OrderBook />
+                {selectedToken ? (
+                  <OrderBook tokenId={selectedToken.id} currentPrice={selectedToken.price} />
+                ) : (
+                  <div className="p-4 text-zinc-500 text-center">Select a token to view order book</div>
+                )}
               </div>
             )}
 
@@ -239,19 +311,29 @@ export default function TradePage() {
                 isChartFullscreen ? "col-span-12" : "lg:col-span-7"
               } flex flex-col min-h-0`}
             >
-              <TradingChart
-                symbol={selectedToken.symbol}
-                isFullscreen={isChartFullscreen}
-                onToggleFullscreen={() =>
-                  setIsChartFullscreen(!isChartFullscreen)
-                }
-              />
+              {selectedToken ? (
+                <TradingChart
+                  symbol={selectedToken.symbol}
+                  isFullscreen={isChartFullscreen}
+                  onToggleFullscreen={() =>
+                    setIsChartFullscreen(!isChartFullscreen)
+                  }
+                />
+              ) : (
+                <div className="flex items-center justify-center h-full text-zinc-500">
+                  {loading ? "Loading tokens..." : "Select a token to view chart"}
+                </div>
+              )}
             </div>
 
             {/* Right Panel - Trade Form (below chart on mobile, side panel on desktop) */}
             {!isChartFullscreen && (
               <div className="lg:col-span-3 border-t lg:border-t-0 lg:border-l border-zinc-800 overflow-y-auto">
-                <TradePanel mode={tradeMode} token={selectedToken} />
+                {selectedToken ? (
+                  <TradePanel mode={tradeMode} token={selectedToken} />
+                ) : (
+                  <div className="p-4 text-zinc-500 text-center">Select a token to trade</div>
+                )}
               </div>
             )}
           </div>

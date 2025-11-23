@@ -42,7 +42,7 @@ fun test_create_ip_token() {
         
         test_scenario::next_tx(&mut scenario, ADMIN);
         token::create_ip_token(
-            &admin_cap,
+            admin_cap,
             &mut registry,
             name,
             symbol,
@@ -52,12 +52,15 @@ fun test_create_ip_token() {
             test_scenario::ctx(&mut scenario),
         );
         
+        // AdminCap is transferred back to sender by the function, so we can take it again
+        test_scenario::next_tx(&mut scenario, ADMIN);
+        let admin_cap = test_scenario::take_from_sender<AdminCap>(&scenario);
+        
         // Get token ID from registry (last token added)
         let token_count = token::get_token_count(&registry);
         let token_id = token::get_token_at(&registry, token_count - 1);
         
         // Verify token was created and transferred to admin
-        test_scenario::next_tx(&mut scenario, ADMIN);
         let token = test_scenario::take_from_sender_by_id<odx::datatypes::IPToken>(&scenario, token_id);
         
         // Verify token properties
@@ -102,7 +105,7 @@ fun test_create_ip_token_invalid_reserve() {
         
         test_scenario::next_tx(&mut scenario, ADMIN);
         token::create_ip_token(
-            &admin_cap,
+            admin_cap,
             &mut registry,
             name,
             symbol,
@@ -112,6 +115,9 @@ fun test_create_ip_token_invalid_reserve() {
             test_scenario::ctx(&mut scenario),
         );
         
+        // AdminCap is transferred back to sender by the function
+        test_scenario::next_tx(&mut scenario, ADMIN);
+        let admin_cap = test_scenario::take_from_sender<AdminCap>(&scenario);
         test_scenario::return_to_sender(&scenario, admin_cap);
         test_scenario::return_shared(registry);
     };
@@ -134,7 +140,7 @@ fun test_update_reserve_pool() {
         // Create a token
         test_scenario::next_tx(&mut scenario, ADMIN);
         token::create_ip_token(
-            &admin_cap,
+            admin_cap,
             &mut registry,
             b"Test Token",
             b"TEST",
@@ -143,6 +149,10 @@ fun test_update_reserve_pool() {
             50000,
             test_scenario::ctx(&mut scenario),
         );
+        
+        // AdminCap is transferred back to sender by the function
+        test_scenario::next_tx(&mut scenario, ADMIN);
+        let admin_cap = test_scenario::take_from_sender<AdminCap>(&scenario);
         
         // Get token ID from registry (last token added)
         let token_count = token::get_token_count(&registry);
@@ -185,7 +195,7 @@ fun test_release_from_reserve() {
         let reserve_pool_size = 50000;
         test_scenario::next_tx(&mut scenario, ADMIN);
         token::create_ip_token(
-            &admin_cap,
+            admin_cap,
             &mut registry,
             b"Test Token",
             b"TEST",
@@ -194,6 +204,10 @@ fun test_release_from_reserve() {
             reserve_pool_size,
             test_scenario::ctx(&mut scenario),
         );
+        
+        // AdminCap is transferred back to sender by the function
+        test_scenario::next_tx(&mut scenario, ADMIN);
+        let admin_cap = test_scenario::take_from_sender<AdminCap>(&scenario);
         
         // Get token ID from registry (last token added)
         let token_count = token::get_token_count(&registry);
@@ -237,7 +251,7 @@ fun test_get_all_tokens() {
         // Create multiple tokens
         test_scenario::next_tx(&mut scenario, ADMIN);
         token::create_ip_token(
-            &admin_cap,
+            admin_cap,
             &mut registry,
             b"Token 1",
             b"T1",
@@ -247,16 +261,19 @@ fun test_get_all_tokens() {
             test_scenario::ctx(&mut scenario),
         );
         
+        // AdminCap is transferred back to sender by the function
+        test_scenario::next_tx(&mut scenario, ADMIN);
+        let admin_cap = test_scenario::take_from_sender<AdminCap>(&scenario);
+        
         // Get token ID from registry (last token added)
         let token_count_1 = token::get_token_count(&registry);
         let token_id_1 = token::get_token_at(&registry, token_count_1 - 1);
         
-        test_scenario::next_tx(&mut scenario, ADMIN);
         let token_1 = test_scenario::take_from_sender_by_id<odx::datatypes::IPToken>(&scenario, token_id_1);
         
         test_scenario::next_tx(&mut scenario, ADMIN);
         token::create_ip_token(
-            &admin_cap,
+            admin_cap,
             &mut registry,
             b"Token 2",
             b"T2",
@@ -265,6 +282,10 @@ fun test_get_all_tokens() {
             60000,
             test_scenario::ctx(&mut scenario),
         );
+        
+        // AdminCap is transferred back to sender by the function
+        test_scenario::next_tx(&mut scenario, ADMIN);
+        let admin_cap = test_scenario::take_from_sender<AdminCap>(&scenario);
         
         // Get token ID from registry (last token added)
         let token_count_2 = token::get_token_count(&registry);

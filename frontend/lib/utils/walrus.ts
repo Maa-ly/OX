@@ -652,7 +652,7 @@ async function queryBlobIdsFromSui(): Promise<string[]> {
             });
             
             allObjects.push(...response.data);
-            cursor = response.hasNextPage ? response.nextCursor : null;
+            cursor = response.hasNextPage ? (response.nextCursor ?? null) : null;
           } while (cursor);
 
           for (const obj of allObjects) {
@@ -842,7 +842,7 @@ export async function getPostsByAddress(walletAddress: string): Promise<{ posts:
       });
       
       allObjects.push(...response.data);
-      cursor = response.hasNextPage ? response.nextCursor : null;
+      cursor = response.hasNextPage ? (response.nextCursor ?? null) : null;
       
       console.log(`[getPostsByAddress] Fetched ${response.data.length} objects (total: ${allObjects.length}, hasNext: ${!!cursor})`);
     } while (cursor);
@@ -1010,7 +1010,7 @@ export async function getPostsByAddress(walletAddress: string): Promise<{ posts:
  * @param userAddress - User wallet address
  * @returns Promise with like status
  */
-export async function likePost(blobId: string, userAddress: string): Promise<{ liked: boolean; likes: number }> {
+export async function likePost(blobId: string, userAddress: string): Promise<{ liked: boolean; likes: number; blobId?: string }> {
   const response = await fetch(`${API_BASE_URL}/api/posts/${blobId}/like`, {
     method: 'POST',
     headers: {
@@ -1041,7 +1041,7 @@ export async function commentOnPost(
   userAddress: string,
   content: string,
   author?: string
-): Promise<{ comment: any; comments: number }> {
+): Promise<{ comment: any; comments: number; blobId?: string }> {
   const response = await fetch(`${API_BASE_URL}/api/posts/${blobId}/comment`, {
     method: 'POST',
     headers: {

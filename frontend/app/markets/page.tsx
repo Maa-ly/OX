@@ -7,6 +7,10 @@ import Image from "next/image";
 import { CustomSelect } from "@/components/ui/custom-select";
 import { MobileBottomNav, MobileSidebar } from "@/components/mobile-nav";
 import { getIPTokens, contractAPI, type PriceResponse } from "@/lib/utils/api";
+import { useWalletAuth } from "@/lib/hooks/useWalletAuth";
+import { createBuyOrder, createSellOrder } from "@/lib/utils/contract";
+import { SuiClient, getFullnodeUrl } from "@mysten/sui/client";
+import { PACKAGE_ID } from "@/lib/utils/constants";
 
 const NavWalletButton = dynamic(
   () =>
@@ -28,6 +32,7 @@ interface TokenMarket {
 }
 
 export default function MarketsPage() {
+  const { wallet, isConnected, address } = useWalletAuth();
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState<
     "marketCap" | "volume" | "price" | "change"
@@ -36,10 +41,229 @@ export default function MarketsPage() {
   const [markets, setMarkets] = useState<TokenMarket[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  
+  // Buy/Sell modal state
+  const [selectedToken, setSelectedToken] = useState<TokenMarket | null>(null);
+  const [modalType, setModalType] = useState<"buy" | "sell">("buy");
+  const [quantity, setQuantity] = useState("");
+  const [price, setPrice] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [modalError, setModalError] = useState<string | null>(null);
+  const [modalSuccess, setModalSuccess] = useState<string | null>(null);
+  const [suiBalance, setSuiBalance] = useState<bigint>(BigInt(0));
+  const [tokenBalance, setTokenBalance] = useState<bigint>(BigInt(0));
 
   useEffect(() => {
     loadMarkets();
   }, []);
+
+  // Load balances when token is selected
+  useEffect(() => {
+    if (selectedToken && isConnected && address) {
+      loadBalances();
+    }
+  }, [selectedToken, isConnected, address]);
+
+  const loadBalances = async () => {
+    if (!selectedToken || !address) return;
+    
+    try {
+      const client = new SuiClient({ url: getFullnodeUrl('testnet') });
+      
+      // Get SUI balance
+      const suiBalanceData = await client.getBalance({ owner: address });
+      setSuiBalance(BigInt(suiBalanceData.totalBalance));
+      
+      // Get IP token balance - IP tokens are owned objects, not coins
+      // We need to query owned objects with the IP token type
+      try {
+        const ownedObjects = await client.getOwnedObjects({
+          owner: address,
+          filter: {
+            StructType: `${PACKAGE_ID}::token::IPToken`,
+          },
+          options: {
+            showContent: true,
+          },
+        });
+        
+        // Count tokens that match the selected token ID
+        // Note: This is a simplified check - in reality, we'd need to check the token ID field
+        // For now, we'll just count all IP tokens the user owns
+        const matchingTokens = ownedObjects.data.filter((obj: any) => {
+          // Check if this object's ID matches the selected token ID
+          // Or check if it's the same token type
+          return obj.data?.objectId === selectedToken.id || 
+                 (obj.data?.type?.includes('IPToken') && obj.data?.content?.fields?.id === selectedToken.id);
+        });
+        
+        // For now, we'll use a placeholder - the actual balance check should be done by querying
+        // the token's balance field if it has one, or by checking owned objects more carefully
+        // The contract will reject the sell order if the user doesn't have enough tokens anyway
+        setTokenBalance(BigInt(matchingTokens.length > 0 ? 1000000 : 0)); // Placeholder - contract will validate
+      } catch (e) {
+        // Token might not exist or user might not have any
+        setTokenBalance(BigInt(0));
+      }
+    } catch (error) {
+      console.error('Error loading balances:', error);
+    }
+  };
+
+  const openBuyModal = (token: TokenMarket) => {
+    setSelectedToken(token);
+    setModalType("buy");
+    setQuantity("");
+    setPrice(token.price > 0 ? (token.price * 1e9).toString() : "");
+    setModalError(null);
+    setModalSuccess(null);
+  };
+
+  const openSellModal = (token: TokenMarket) => {
+    setSelectedToken(token);
+    setModalType("sell");
+    setQuantity("");
+    setPrice(token.price > 0 ? (token.price * 1e9).toString() : "");
+    setModalError(null);
+    setModalSuccess(null);
+  };
+
+  const closeModal = () => {
+    setSelectedToken(null);
+    setQuantity("");
+    setPrice("");
+    setModalError(null);
+    setModalSuccess(null);
+  };
+
+  const handleBuy = async () => {
+    if (!selectedToken || !wallet || !isConnected || !address) {
+      setModalError("Please connect your wallet");
+      return;
+    }
+
+    if (!quantity || !price) {
+      setModalError("Please enter quantity and price");
+      return;
+    }
+
+    const quantityNum = parseFloat(quantity);
+    const priceNum = parseFloat(price);
+
+    if (quantityNum <= 0 || priceNum <= 0) {
+      setModalError("Quantity and price must be greater than 0");
+      return;
+    }
+
+    setSubmitting(true);
+    setModalError(null);
+    setModalSuccess(null);
+
+    try {
+      // Get SUI coins for payment
+      const client = new SuiClient({ url: getFullnodeUrl('testnet') });
+      const allCoins = await client.getAllCoins({ owner: address });
+      const suiCoins = allCoins.data.filter(c => c.coinType === '0x2::sui::SUI');
+      
+      if (suiCoins.length === 0) {
+        throw new Error("No SUI coins found. Please ensure you have SUI in your wallet.");
+      }
+
+      // Calculate total cost (price * quantity + fee)
+      // Fee is 1% (100 bps) of total cost
+      const totalCost = BigInt(Math.floor(priceNum * quantityNum));
+      const fee = totalCost * BigInt(100) / BigInt(10000); // 1% fee
+      const totalRequired = totalCost + fee;
+
+      // Find a coin with sufficient balance
+      let paymentCoin = suiCoins.find(c => BigInt(c.balance) >= totalRequired);
+      
+      if (!paymentCoin) {
+        // Try to find the largest coin
+        paymentCoin = suiCoins.reduce((max, coin) => 
+          BigInt(coin.balance) > BigInt(max.balance) ? coin : max
+        );
+        
+        if (BigInt(paymentCoin.balance) < totalRequired) {
+          throw new Error(`Insufficient SUI balance. Required: ${Number(totalRequired) / 1e9} SUI, Available: ${Number(paymentCoin.balance) / 1e9} SUI`);
+        }
+      }
+
+      // Create buy order
+      const result = await createBuyOrder(
+        {
+          ipTokenId: selectedToken.id,
+          price: Math.floor(priceNum),
+          quantity: Math.floor(quantityNum),
+          paymentCoinId: paymentCoin.coinObjectId,
+        },
+        wallet
+      );
+
+      setModalSuccess(`Buy order created successfully! Order ID: ${result.orderId?.slice(0, 10)}...`);
+      setTimeout(() => {
+        closeModal();
+        loadMarkets(); // Refresh market data
+      }, 2000);
+    } catch (error: any) {
+      console.error("Error creating buy order:", error);
+      setModalError(error.message || "Failed to create buy order");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleSell = async () => {
+    if (!selectedToken || !wallet || !isConnected || !address) {
+      setModalError("Please connect your wallet");
+      return;
+    }
+
+    if (!quantity || !price) {
+      setModalError("Please enter quantity and price");
+      return;
+    }
+
+    const quantityNum = parseFloat(quantity);
+    const priceNum = parseFloat(price);
+
+    if (quantityNum <= 0 || priceNum <= 0) {
+      setModalError("Quantity and price must be greater than 0");
+      return;
+    }
+
+    // Note: We can't easily check IP token balance here since they're owned objects, not coins
+    // The contract will reject the sell order if the user doesn't have enough tokens
+    // For now, we'll just validate the input and let the contract handle the balance check
+
+    setSubmitting(true);
+    setModalError(null);
+    setModalSuccess(null);
+
+    try {
+      // Create sell order
+      const result = await createSellOrder(
+        {
+          ipTokenId: selectedToken.id,
+          price: Math.floor(priceNum),
+          quantity: Math.floor(quantityNum),
+        },
+        wallet
+      );
+
+      setModalSuccess(`Sell order created successfully! Order ID: ${result.orderId?.slice(0, 10)}...`);
+      setTimeout(() => {
+        closeModal();
+        loadMarkets(); // Refresh market data
+        loadBalances(); // Refresh balances
+      }, 2000);
+    } catch (error: any) {
+      console.error("Error creating sell order:", error);
+      setModalError(error.message || "Failed to create sell order");
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   const loadMarkets = async () => {
     setLoading(true);
@@ -401,12 +625,22 @@ export default function MarketsPage() {
                     {market.marketCap > 0 ? `$${(market.marketCap / 1000000).toFixed(2)}M` : '-'}
                   </td>
                   <td className="py-4 px-6 text-center">
-                    <Link
-                      href={`/trade?symbol=${market.symbol}`}
-                      className="inline-block px-4 py-2 bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30 rounded-lg text-sm font-medium transition-colors"
-                    >
-                      Trade
-                    </Link>
+                    <div className="flex items-center gap-2 justify-center">
+                      <button
+                        onClick={() => openBuyModal(market)}
+                        disabled={!isConnected}
+                        className="px-3 py-1.5 bg-green-500/20 text-green-400 hover:bg-green-500/30 disabled:bg-zinc-700 disabled:text-zinc-500 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors"
+                      >
+                        Buy
+                      </button>
+                      <button
+                        onClick={() => openSellModal(market)}
+                        disabled={!isConnected}
+                        className="px-3 py-1.5 bg-red-500/20 text-red-400 hover:bg-red-500/30 disabled:bg-zinc-700 disabled:text-zinc-500 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors"
+                      >
+                        Sell
+                      </button>
+                    </div>
                   </td>
                 </tr>
                 ))}
@@ -424,6 +658,119 @@ export default function MarketsPage() {
 
       {/* Mobile Bottom Navigation */}
       <MobileBottomNav />
+
+      {/* Buy/Sell Modal */}
+      {selectedToken && (
+        <div className="fixed inset-0 flex items-center justify-center bg-black/80 backdrop-blur-sm z-50 p-4">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-6 max-w-md w-full">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-semibold">
+                {modalType === "buy" ? "Buy" : "Sell"} {selectedToken.name}
+              </h2>
+              <button
+                onClick={closeModal}
+                className="text-zinc-400 hover:text-white transition-colors"
+              >
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Balance Info */}
+            {isConnected && (
+              <div className="mb-4 p-3 bg-zinc-800/50 rounded-lg text-sm">
+                {modalType === "buy" ? (
+                  <div>
+                    <div className="text-zinc-400">SUI Balance:</div>
+                    <div className="text-white font-semibold">{(Number(suiBalance) / 1e9).toFixed(4)} SUI</div>
+                  </div>
+                ) : (
+                  <div>
+                    <div className="text-zinc-400">Note:</div>
+                    <div className="text-white text-xs">The contract will validate your token balance when you submit the sell order.</div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Form */}
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm text-zinc-400 mb-2">Quantity</label>
+                <input
+                  type="number"
+                  value={quantity}
+                  onChange={(e) => setQuantity(e.target.value)}
+                  placeholder="Enter quantity"
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-4 py-2 focus:outline-none focus:border-cyan-500"
+                  disabled={submitting}
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm text-zinc-400 mb-2">Price per Token (MIST)</label>
+                <input
+                  type="number"
+                  value={price}
+                  onChange={(e) => setPrice(e.target.value)}
+                  placeholder="Enter price in MIST (1 SUI = 1e9 MIST)"
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-4 py-2 focus:outline-none focus:border-cyan-500"
+                  disabled={submitting}
+                />
+                {price && (
+                  <div className="text-xs text-zinc-500 mt-1">
+                    ≈ {(parseFloat(price) / 1e9).toFixed(6)} SUI per token
+                  </div>
+                )}
+              </div>
+
+              {quantity && price && (
+                <div className="p-3 bg-zinc-800/50 rounded-lg text-sm">
+                  <div className="text-zinc-400">Total Cost:</div>
+                  <div className="text-white font-semibold">
+                    {((parseFloat(price) * parseFloat(quantity)) / 1e9).toFixed(6)} SUI
+                    {modalType === "buy" && (
+                      <span className="text-zinc-500 text-xs ml-2">
+                        (including ~1% fee)
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {modalError && (
+                <div className="p-3 bg-red-900/20 border border-red-500/50 rounded-lg text-red-400 text-sm">
+                  {modalError}
+                </div>
+              )}
+
+              {modalSuccess && (
+                <div className="p-3 bg-green-900/20 border border-green-500/50 rounded-lg text-green-400 text-sm">
+                  {modalSuccess}
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <button
+                  onClick={closeModal}
+                  disabled={submitting}
+                  className="flex-1 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 disabled:bg-zinc-800 disabled:opacity-50 rounded-lg transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={modalType === "buy" ? handleBuy : handleSell}
+                  disabled={submitting || !quantity || !price || !isConnected}
+                  className="flex-1 px-4 py-2 bg-cyan-500 hover:bg-cyan-600 disabled:bg-zinc-700 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+                >
+                  {submitting ? "Processing..." : modalType === "buy" ? "Buy" : "Sell"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

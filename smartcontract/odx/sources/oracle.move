@@ -10,6 +10,7 @@ module odx::oracle;
 use sui::object::{Self, UID, ID};
 use sui::tx_context::{Self, TxContext};
 use sui::table::{Self, Table};
+use sui::transfer;
 use std::option::{Self, Option};
 use odx::datatypes::{EngagementMetrics, PriceData, TradingMetrics};
 use odx::rewards;
@@ -215,9 +216,9 @@ public fun update_engagement_metrics_with_nautilus(
 
 /// Update engagement metrics (without Nautilus verification)
 /// Sometimes useful for testing or if you trust the caller
-public fun update_engagement_metrics(
+public entry fun update_engagement_metrics(
     oracle: &mut PriceOracle,
-    admin_cap: &OracleAdminCap,
+    admin_cap: OracleAdminCap,
     ip_token_id: ID,
     average_rating: u64,
     total_contributors: u64,
@@ -227,7 +228,7 @@ public fun update_engagement_metrics(
     ctx: &mut TxContext,
 ) {
     // Check admin and validate metrics
-    check_oracle_admin(admin_cap);
+    check_oracle_admin(&admin_cap);
     validate_metrics(average_rating, total_contributors, total_engagements);
     
     let metrics = odx::datatypes::create_engagement_metrics(
@@ -249,6 +250,9 @@ public fun update_engagement_metrics(
     
     // Automatically recalculate price after metrics update
     recalculate_price(oracle, ip_token_id, ctx);
+    
+    // Transfer admin cap back to sender (it was passed by value, so we need to return it)
+    transfer::transfer(admin_cap, tx_context::sender(ctx));
 }
 
 /// Nautilus Enclave Registry

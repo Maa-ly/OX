@@ -1262,98 +1262,190 @@ export class ContractService {
         throw new Error('Blob Storage Registry ID not configured. Set BLOB_STORAGE_REGISTRY_ID in .env');
       }
 
-      const tx = new Transaction();
+      // Query the object directly instead of using devInspectTransactionBlock
+      // This is more reliable and simpler
+      const registryObject = await this.client.getObject({
+        id: this.blobStorageRegistryId,
+        options: {
+          showContent: true,
+          showType: true,
+        },
+      });
+
+      if (registryObject.data?.content?.dataType !== 'moveObject') {
+        throw new Error('Registry object is not a move object');
+      }
+
+      const fields = registryObject.data.content.fields;
+      const allBlobs = fields?.all_blobs || [];
+
+      logger.info(`Found ${allBlobs.length} blobs in registry`);
+
+      // Convert Move object format to our format
+      const blobs = allBlobs.map((blobRecord) => {
+        const blobIdBytes = blobRecord.fields?.blob_id || [];
+        const blobId = Buffer.from(blobIdBytes).toString('utf-8');
+        
+        const textBytes = blobRecord.fields?.text || null;
+        const text = textBytes ? Buffer.from(textBytes).toString('utf-8') : null;
+        
+        const timestamp = blobRecord.fields?.timestamp || 0;
+
+        return {
+          blobId,
+          text,
+          timestamp: Number(timestamp),
+        };
+      });
+
+      return blobs;
+    } catch (error) {
+      logger.error('Error getting all blobs:', error);
       
-      tx.moveCall({
-        target: `${this.packageId}::blob_storage::get_all_blobs`,
-        arguments: [
-          tx.object(this.blobStorageRegistryId),
-        ],
-      });
-
-      const result = await this.client.devInspectTransactionBlock({
-        sender: this.adminKeypair?.toSuiAddress() || '0x0000000000000000000000000000000000000000000000000000000000000000',
-        transactionBlock: tx,
-      });
-
-      if (result.results?.[0]?.returnValues) {
-        const returnValue = result.results[0].returnValues[0];
-        // returnValue format: [bcsType, bcsBytes] where bcsBytes is base64 encoded
-        // For vector<BlobRecord>, we need to decode the BCS bytes
+      // Fallback: Try using devInspectTransactionBlock if direct query fails
+      try {
+        logger.info('Falling back to devInspectTransactionBlock method...');
+        const tx = new Transaction();
         
-        const bcsBytes = Buffer.from(returnValue[1], 'base64');
-        const blobs = [];
-        
-        try {
-          // Parse vector length (uleb128)
-          let offset = 0;
-          let length = 0;
-          let shift = 0;
-          while (offset < bcsBytes.length) {
-            const byte = bcsBytes[offset++];
-            length |= (byte & 0x7f) << shift;
-            if ((byte & 0x80) === 0) break;
-            shift += 7;
-          }
+        tx.moveCall({
+          target: `${this.packageId}::blob_storage::get_all_blobs`,
+          arguments: [
+            tx.object(this.blobStorageRegistryId),
+          ],
+        });
+
+        const result = await this.client.devInspectTransactionBlock({
+          sender: this.adminKeypair?.toSuiAddress() || '0x0000000000000000000000000000000000000000000000000000000000000000',
+          transactionBlock: tx,
+        });
+
+        if (result.results?.[0]?.returnValues) {
+          const returnValue = result.results[0].returnValues[0];
+          // returnValue format: [bcsType, bcsBytes] where bcsBytes is base64 encoded
+          // For vector<BlobRecord>, we need to decode the BCS bytes
           
-          // Parse each BlobRecord
-          for (let i = 0; i < length; i++) {
-            // Parse blob_id: vector<u8>
-            let blobIdLength = 0;
-            shift = 0;
+          logger.debug('BCS return value type:', returnValue[0]);
+          logger.debug('BCS bytes length (base64):', returnValue[1]?.length);
+          
+          const bcsBytes = Buffer.from(returnValue[1], 'base64');
+          logger.debug('BCS bytes length (decoded):', bcsBytes.length);
+          logger.debug('BCS bytes (first 100):', bcsBytes.slice(0, 100));
+          
+          const blobs = [];
+          
+          try {
+            // Parse vector length (uleb128)
+            let offset = 0;
+            let length = 0;
+            let shift = 0;
             while (offset < bcsBytes.length) {
               const byte = bcsBytes[offset++];
-              blobIdLength |= (byte & 0x7f) << shift;
+              length |= (byte & 0x7f) << shift;
               if ((byte & 0x80) === 0) break;
               shift += 7;
             }
-            const blobIdBytes = bcsBytes.slice(offset, offset + blobIdLength);
-            offset += blobIdLength;
-            const blobId = blobIdBytes.toString('utf-8');
             
-            // Parse text: Option<vector<u8>> (1 byte flag: 0 = none, 1 = some)
-            const hasText = bcsBytes[offset++] === 1;
-            let text = null;
-            if (hasText) {
-              let textLength = 0;
+            // Parse each BlobRecord
+            for (let i = 0; i < length; i++) {
+              // Check if we have enough bytes left
+              if (offset >= bcsBytes.length) {
+                logger.warn(`Not enough bytes to parse BlobRecord ${i + 1}/${length}`);
+                break;
+              }
+              
+              // Parse blob_id: vector<u8>
+              let blobIdLength = 0;
               shift = 0;
               while (offset < bcsBytes.length) {
                 const byte = bcsBytes[offset++];
-                textLength |= (byte & 0x7f) << shift;
+                blobIdLength |= (byte & 0x7f) << shift;
                 if ((byte & 0x80) === 0) break;
                 shift += 7;
               }
-              const textBytes = bcsBytes.slice(offset, offset + textLength);
-              offset += textLength;
-              text = textBytes.toString('utf-8');
+              
+              // Check if we have enough bytes for the blob ID
+              if (offset + blobIdLength > bcsBytes.length) {
+                logger.warn(`Not enough bytes for blob_id in BlobRecord ${i + 1}/${length}. Need ${blobIdLength} bytes, have ${bcsBytes.length - offset}`);
+                break;
+              }
+              
+              const blobIdBytes = bcsBytes.slice(offset, offset + blobIdLength);
+              offset += blobIdLength;
+              const blobId = blobIdBytes.toString('utf-8');
+              
+              // Parse text: Option<vector<u8>> (1 byte flag: 0 = none, 1 = some)
+              if (offset >= bcsBytes.length) {
+                logger.warn(`Not enough bytes for text option flag in BlobRecord ${i + 1}/${length}`);
+                break;
+              }
+              
+              const hasText = bcsBytes[offset++] === 1;
+              let text = null;
+              if (hasText) {
+                if (offset >= bcsBytes.length) {
+                  logger.warn(`Not enough bytes for text length in BlobRecord ${i + 1}/${length}`);
+                  break;
+                }
+                
+                let textLength = 0;
+                shift = 0;
+                while (offset < bcsBytes.length) {
+                  const byte = bcsBytes[offset++];
+                  textLength |= (byte & 0x7f) << shift;
+                  if ((byte & 0x80) === 0) break;
+                  shift += 7;
+                }
+                
+                // Check if we have enough bytes for the text
+                if (offset + textLength > bcsBytes.length) {
+                  logger.warn(`Not enough bytes for text in BlobRecord ${i + 1}/${length}. Need ${textLength} bytes, have ${bcsBytes.length - offset}`);
+                  break;
+                }
+                
+                const textBytes = bcsBytes.slice(offset, offset + textLength);
+                offset += textLength;
+                text = textBytes.toString('utf-8');
+              }
+              
+              // Parse timestamp: u64 (little-endian, 8 bytes)
+              if (offset + 8 > bcsBytes.length) {
+                logger.warn(`Not enough bytes for timestamp in BlobRecord ${i + 1}/${length}. Need 8 bytes, have ${bcsBytes.length - offset}`);
+                break;
+              }
+              
+              let timestamp = 0n;
+              for (let j = 0; j < 8; j++) {
+                const byte = bcsBytes[offset + j];
+                if (byte === undefined) {
+                  logger.warn(`Undefined byte at offset ${offset + j} when parsing timestamp for BlobRecord ${i + 1}/${length}`);
+                  break;
+                }
+                timestamp |= BigInt(byte) << BigInt(j * 8);
+              }
+              offset += 8;
+              
+              blobs.push({
+                blobId,
+                text,
+                timestamp: Number(timestamp),
+              });
             }
-            
-            // Parse timestamp: u64 (little-endian, 8 bytes)
-            let timestamp = 0n;
-            for (let j = 0; j < 8; j++) {
-              timestamp |= BigInt(bcsBytes[offset + j]) << BigInt(j * 8);
-            }
-            offset += 8;
-            
-            blobs.push({
-              blobId,
-              text,
-              timestamp: Number(timestamp),
-            });
+          } catch (parseError) {
+            logger.error('Error parsing blob records from BCS:', parseError);
+            logger.error('BCS bytes length:', bcsBytes.length);
+            logger.error('Parsed blobs so far:', blobs.length);
+            // Return whatever we parsed so far instead of empty array
+            return blobs;
           }
-        } catch (parseError) {
-          logger.error('Error parsing blob records from BCS:', parseError);
-          // Return empty array if parsing fails
-          return [];
+          
+          return blobs;
         }
-        
-        return blobs;
-      }
 
-      return [];
-    } catch (error) {
-      logger.error('Error getting all blobs:', error);
-      throw new Error(`Failed to get all blobs: ${error.message}`);
+        return [];
+      } catch (fallbackError) {
+        logger.error('Fallback method also failed:', fallbackError);
+        throw new Error(`Failed to get all blobs: ${fallbackError.message}`);
+      }
     }
   }
 }

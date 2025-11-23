@@ -10,7 +10,8 @@ import {
   PACKAGE_ID, 
   TOKEN_REGISTRY_ID, 
   ORACLE_OBJECT_ID,
-  REWARDS_REGISTRY_ID
+  REWARDS_REGISTRY_ID,
+  MARKETPLACE_OBJECT_ID
 } from './constants';
 
 /**
@@ -286,6 +287,59 @@ export async function getContributorCount(ipTokenId: string): Promise<number> {
   }
 
   return 0;
+}
+
+/**
+ * Get highest bid and lowest ask for an IP token (read-only, no wallet required)
+ * 
+ * @param ipTokenId - IP token ID
+ * @returns Promise with highest bid and lowest ask prices in SUI
+ */
+export async function getMarketPrice(
+  ipTokenId: string
+): Promise<{ highestBid: number; lowestAsk: number }> {
+  const client = getSuiClient();
+  
+  // Query highest bid
+  const bidTx = new Transaction();
+  bidTx.moveCall({
+    target: `${PACKAGE_ID}::marketplace::get_highest_bid`,
+    arguments: [
+      bidTx.object(MARKETPLACE_OBJECT_ID),
+      bidTx.pure.id(ipTokenId),
+    ],
+  });
+
+  // Query lowest ask
+  const askTx = new Transaction();
+  askTx.moveCall({
+    target: `${PACKAGE_ID}::marketplace::get_lowest_ask`,
+    arguments: [
+      askTx.object(MARKETPLACE_OBJECT_ID),
+      askTx.pure.id(ipTokenId),
+    ],
+  });
+
+  const [bidResult, askResult] = await Promise.all([
+    client.devInspectTransactionBlock({
+      sender: '0x0000000000000000000000000000000000000000000000000000000000000000',
+      transactionBlock: bidTx,
+    }),
+    client.devInspectTransactionBlock({
+      sender: '0x0000000000000000000000000000000000000000000000000000000000000000',
+      transactionBlock: askTx,
+    }),
+  ]);
+
+  const highestBid = bidResult.results?.[0]?.returnValues?.[0]?.[1]
+    ? parseU64(bidResult.results[0].returnValues[0][1]) / 1e9
+    : 0;
+  
+  const lowestAsk = askResult.results?.[0]?.returnValues?.[0]?.[1]
+    ? parseU64(askResult.results[0].returnValues[0][1]) / 1e9
+    : 0;
+
+  return { highestBid, lowestAsk };
 }
 
 /**

@@ -16,6 +16,7 @@ import walrusRoutes from './routes/walrus.js';
 import contractRoutes from './routes/contract.js';
 import nautilusRoutes from './routes/nautilus.js';
 import postsRoutes from './routes/posts.js';
+import userRoutes from './routes/user.js';
 
 // Import services
 import { OracleScheduler } from './services/scheduler.js';
@@ -71,6 +72,7 @@ app.use('/api/walrus', walrusRoutes);
 app.use('/api/contract', contractRoutes);
 app.use('/api/nautilus', nautilusRoutes);
 app.use('/api/posts', postsRoutes);
+app.use('/api/user', userRoutes);
 
 // Root endpoint
 app.get('/', (req, res) => {

@@ -78,7 +78,7 @@ public fun init_for_testing(ctx: &mut TxContext) {
 /// 
 /// # Returns:
 /// - `()`: No return value
-public fun store_blob(
+public entry fun store_blob(
     registry: &mut BlobStorageRegistry,
     blob_id: vector<u8>,
     text: vector<u8>,

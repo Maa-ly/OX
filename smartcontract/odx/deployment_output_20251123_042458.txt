@@ -1,0 +1,212 @@
+[warning] Client/Server api version mismatch, client api version : 1.60.0, server api version : 1.61.1
+[Note]: Dependency sources are no longer verified automatically during publication and upgrade. You can pass the `--verify-deps` option if you would like to verify them as part of publication or upgrade.
+[note] Dependencies on Bridge, MoveStdlib, Sui, and SuiSystem are automatically added, but this feature is disabled for your package because you have explicitly included dependencies on Sui. Consider removing these dependencies from Move.toml.
+INCLUDING DEPENDENCY Sui
+INCLUDING DEPENDENCY MoveStdlib
+BUILDING odx
+[0m[1m[38;5;11mwarning[Lint W99010][0m[1m: unnecessary `entry` on a `public` function[0m
+   [0m[34m┌─[0m /home/odeili/project_career_build/Manga/OX/smartcontract/odx/sources/marketplace.move:98:8
+   [0m[34m│[0m
+[0m[34m98[0m [0m[34m│[0m public [0m[33mentry[0m fun create_buy_order(
+   [0m[34m│[0m        [0m[33m^^^^^[0m [0m[33m`entry` on `public` functions limits composability as it adds restrictions, e.g. the type of each return value must have `drop`. `entry` on `public` is only meaningful in niche scenarios.[0m
+   [0m[34m│[0m
+   [0m[34m=[0m `public` functions can be called from PTBs. `entry` can be used to allow non-`public` functions to be called from PTBs, but it adds restrictions on the usage of input arguments and on the type of return values. Unless this `public` function interacts with an intricate set of other `entry` functions, the `entry` modifier should be removed.
+   [0m[34m=[0m This warning can be suppressed with '#[allow(lint(public_entry))]' applied to the 'module' or module member ('const', 'fun', or 'struct')
+
+[0m[1m[38;5;9merror[Sui E02002][0m[1m: invalid 'entry' function signature[0m
+    [0m[34m┌─[0m /home/odeili/project_career_build/Manga/OX/smartcontract/odx/sources/marketplace.move:98:8
+    [0m[34m│[0m
+[0m[34m 98[0m [0m[34m│[0m public [0m[31mentry[0m fun create_buy_order(
+    [0m[34m│[0m        [0m[31m^^^^^[0m [0m[31mInvalid return type for entry function 'create_buy_order'[0m
+    [0m[34m·[0m
+[0m[34m105[0m [0m[34m│[0m ): (ID, Coin<SUI>) {
+    [0m[34m│[0m    [0m[34m---------------[0m
+    [0m[34m│[0m    [0m[34m│[0m    [0m[34m│[0m
+    [0m[34m│[0m    [0m[34m│[0m    [0m[34mThe type '(sui::object::ID, sui::coin::Coin<sui::sui::SUI>)' can have the ability 'drop' but the type argument 'sui::coin::Coin<sui::sui::SUI>' does not have the required ability 'drop'[0m
+    [0m[34m│[0m    [0m[34mThe type '(sui::object::ID, sui::coin::Coin<sui::sui::SUI>)' does not have the ability 'drop'[0m
+
+[0m[1m[38;5;11mwarning[Lint W99010][0m[1m: unnecessary `entry` on a `public` function[0m
+    [0m[34m┌─[0m /home/odeili/project_career_build/Manga/OX/smartcontract/odx/sources/marketplace.move:173:8
+    [0m[34m│[0m
+[0m[34m173[0m [0m[34m│[0m public [0m[33mentry[0m fun create_sell_order(
+    [0m[34m│[0m        [0m[33m^^^^^[0m [0m[33m`entry` on `public` functions limits composability as it adds restrictions, e.g. the type of each return value must have `drop`. `entry` on `public` is only meaningful in niche scenarios.[0m
+    [0m[34m│[0m
+    [0m[34m=[0m `public` functions can be called from PTBs. `entry` can be used to allow non-`public` functions to be called from PTBs, but it adds restrictions on the usage of input arguments and on the type of return values. Unless this `public` function interacts with an intricate set of other `entry` functions, the `entry` modifier should be removed.
+    [0m[34m=[0m This warning can be suppressed with '#[allow(lint(public_entry))]' applied to the 'module' or module member ('const', 'fun', or 'struct')
+
+[0m[1m[38;5;11mwarning[Lint W99010][0m[1m: unnecessary `entry` on a `public` function[0m
+    [0m[34m┌─[0m /home/odeili/project_career_build/Manga/OX/smartcontract/odx/sources/marketplace.move:228:8
+    [0m[34m│[0m
+[0m[34m228[0m [0m[34m│[0m public [0m[33mentry[0m fun execute_buy_order(
+    [0m[34m│[0m        [0m[33m^^^^^[0m [0m[33m`entry` on `public` functions limits composability as it adds restrictions, e.g. the type of each return value must have `drop`. `entry` on `public` is only meaningful in niche scenarios.[0m
+    [0m[34m│[0m
+    [0m[34m=[0m `public` functions can be called from PTBs. `entry` can be used to allow non-`public` functions to be called from PTBs, but it adds restrictions on the usage of input arguments and on the type of return values. Unless this `public` function interacts with an intricate set of other `entry` functions, the `entry` modifier should be removed.
+    [0m[34m=[0m This warning can be suppressed with '#[allow(lint(public_entry))]' applied to the 'module' or module member ('const', 'fun', or 'struct')
+
+[0m[1m[38;5;11mwarning[Lint W99010][0m[1m: unnecessary `entry` on a `public` function[0m
+    [0m[34m┌─[0m /home/odeili/project_career_build/Manga/OX/smartcontract/odx/sources/marketplace.move:316:8
+    [0m[34m│[0m
+[0m[34m316[0m [0m[34m│[0m public [0m[33mentry[0m fun execute_sell_order(
+    [0m[34m│[0m        [0m[33m^^^^^[0m [0m[33m`entry` on `public` functions limits composability as it adds restrictions, e.g. the type of each return value must have `drop`. `entry` on `public` is only meaningful in niche scenarios.[0m
+    [0m[34m│[0m
+    [0m[34m=[0m `public` functions can be called from PTBs. `entry` can be used to allow non-`public` functions to be called from PTBs, but it adds restrictions on the usage of input arguments and on the type of return values. Unless this `public` function interacts with an intricate set of other `entry` functions, the `entry` modifier should be removed.
+    [0m[34m=[0m This warning can be suppressed with '#[allow(lint(public_entry))]' applied to the 'module' or module member ('const', 'fun', or 'struct')
+
+[0m[1m[38;5;11mwarning[Lint W99010][0m[1m: unnecessary `entry` on a `public` function[0m
+    [0m[34m┌─[0m /home/odeili/project_career_build/Manga/OX/smartcontract/odx/sources/marketplace.move:388:8
+    [0m[34m│[0m
+[0m[34m388[0m [0m[34m│[0m public [0m[33mentry[0m fun cancel_order(
+    [0m[34m│[0m        [0m[33m^^^^^[0m [0m[33m`entry` on `public` functions limits composability as it adds restrictions, e.g. the type of each return value must have `drop`. `entry` on `public` is only meaningful in niche scenarios.[0m
+    [0m[34m│[0m
+    [0m[34m=[0m `public` functions can be called from PTBs. `entry` can be used to allow non-`public` functions to be called from PTBs, but it adds restrictions on the usage of input arguments and on the type of return values. Unless this `public` function interacts with an intricate set of other `entry` functions, the `entry` modifier should be removed.
+    [0m[34m=[0m This warning can be suppressed with '#[allow(lint(public_entry))]' applied to the 'module' or module member ('const', 'fun', or 'struct')
+
+[0m[1m[38;5;11mwarning[W09001][0m[1m: unused alias[0m
+   [0m[34m┌─[0m /home/odeili/project_career_build/Manga/OX/smartcontract/odx/sources/rewards.move:15:10
+   [0m[34m│[0m
+[0m[34m15[0m [0m[34m│[0m use sui::[0m[33mtransfer[0m;
+   [0m[34m│[0m          [0m[33m^^^^^^^^[0m [0m[33mUnused 'use' of alias 'transfer'. Consider removing it[0m
+   [0m[34m│[0m
+   [0m[34m=[0m This warning can be suppressed with '#[allow(unused_use)]' applied to the 'module' or module member ('const', 'fun', or 'struct')
+
+[0m[1m[38;5;11mwarning[W09001][0m[1m: unused alias[0m
+   [0m[34m┌─[0m /home/odeili/project_career_build/Manga/OX/smartcontract/odx/sources/rewards.move:17:10
+   [0m[34m│[0m
+[0m[34m17[0m [0m[34m│[0m use std::[0m[33mvector[0m;
+   [0m[34m│[0m          [0m[33m^^^^^^[0m [0m[33mUnused 'use' of alias 'vector'. Consider removing it[0m
+   [0m[34m│[0m
+   [0m[34m=[0m This alias does not shadow the built-in type 'vector' in type annotations.
+   [0m[34m=[0m This warning can be suppressed with '#[allow(unused_use)]' applied to the 'module' or module member ('const', 'fun', or 'struct')
+
+[0m[1m[38;5;11mwarning[W09001][0m[1m: unused alias[0m
+   [0m[34m┌─[0m /home/odeili/project_career_build/Manga/OX/smartcontract/odx/sources/rewards.move:18:19
+   [0m[34m│[0m
+[0m[34m18[0m [0m[34m│[0m use std::option::{[0m[33mSelf[0m, Option};
+   [0m[34m│[0m                   [0m[33m^^^^[0m [0m[33mUnused 'use' of alias 'option'. Consider removing it[0m
+   [0m[34m│[0m
+   [0m[34m=[0m This warning can be suppressed with '#[allow(unused_use)]' applied to the 'module' or module member ('const', 'fun', or 'struct')
+
+[0m[1m[38;5;11mwarning[W09001][0m[1m: unused alias[0m
+   [0m[34m┌─[0m /home/odeili/project_career_build/Manga/OX/smartcontract/odx/sources/rewards.move:19:22
+   [0m[34m│[0m
+[0m[34m19[0m [0m[34m│[0m use odx::datatypes::{[0m[33mSelf[0m, ContributorRecord, RewardDistribution, EngagementData, IPToken};
+   [0m[34m│[0m                      [0m[33m^^^^[0m [0m[33mUnused 'use' of alias 'datatypes'. Consider removing it[0m
+   [0m[34m│[0m
+   [0m[34m=[0m This warning can be suppressed with '#[allow(unused_use)]' applied to the 'module' or module member ('const', 'fun', or 'struct')
+
+[0m[1m[38;5;11mwarning[Lint W99010][0m[1m: unnecessary `entry` on a `public` function[0m
+   [0m[34m┌─[0m /home/odeili/project_career_build/Manga/OX/smartcontract/odx/sources/rewards.move:94:8
+   [0m[34m│[0m
+[0m[34m94[0m [0m[34m│[0m public [0m[33mentry[0m fun register_engagement(
+   [0m[34m│[0m        [0m[33m^^^^^[0m [0m[33m`entry` on `public` functions limits composability as it adds restrictions, e.g. the type of each return value must have `drop`. `entry` on `public` is only meaningful in niche scenarios.[0m
+   [0m[34m│[0m
+   [0m[34m=[0m `public` functions can be called from PTBs. `entry` can be used to allow non-`public` functions to be called from PTBs, but it adds restrictions on the usage of input arguments and on the type of return values. Unless this `public` function interacts with an intricate set of other `entry` functions, the `entry` modifier should be removed.
+   [0m[34m=[0m This warning can be suppressed with '#[allow(lint(public_entry))]' applied to the 'module' or module member ('const', 'fun', or 'struct')
+
+[0m[1m[38;5;9merror[Sui E02002][0m[1m: invalid 'entry' function signature[0m
+   [0m[34m┌─[0m /home/odeili/project_career_build/Manga/OX/smartcontract/odx/sources/rewards.move:96:5
+   [0m[34m│[0m
+[0m[34m94[0m [0m[34m│[0m public entry fun register_engagement(
+   [0m[34m│[0m        [0m[34m-----[0m [0m[34m'register_engagement' was declared 'entry' here[0m
+[0m[34m95[0m [0m[34m│[0m     registry: &mut RewardsRegistry,
+[0m[34m96[0m [0m[34m│[0m     [0m[31mengagement[0m: EngagementData,
+   [0m[34m│[0m     [0m[31m^^^^^^^^^^[0m  [0m[34m--------------[0m [0m[34m'entry' parameters must be primitives (by-value), vectors of primitives, objects (by-reference or by-value), vectors of objects, or 'Receiving' arguments (by-reference or by-value)[0m
+   [0m[34m│[0m     [0m[31m│[0m            
+   [0m[34m│[0m     [0m[31mInvalid 'entry' parameter type for parameter 'engagement'[0m
+
+[0m[1m[38;5;11mwarning[Lint W99010][0m[1m: unnecessary `entry` on a `public` function[0m
+    [0m[34m┌─[0m /home/odeili/project_career_build/Manga/OX/smartcontract/odx/sources/rewards.move:250:8
+    [0m[34m│[0m
+[0m[34m250[0m [0m[34m│[0m public [0m[33mentry[0m fun distribute_reward(
+    [0m[34m│[0m        [0m[33m^^^^^[0m [0m[33m`entry` on `public` functions limits composability as it adds restrictions, e.g. the type of each return value must have `drop`. `entry` on `public` is only meaningful in niche scenarios.[0m
+    [0m[34m│[0m
+    [0m[34m=[0m `public` functions can be called from PTBs. `entry` can be used to allow non-`public` functions to be called from PTBs, but it adds restrictions on the usage of input arguments and on the type of return values. Unless this `public` function interacts with an intricate set of other `entry` functions, the `entry` modifier should be removed.
+    [0m[34m=[0m This warning can be suppressed with '#[allow(lint(public_entry))]' applied to the 'module' or module member ('const', 'fun', or 'struct')
+
+[0m[1m[38;5;11mwarning[W09001][0m[1m: unused alias[0m
+   [0m[34m┌─[0m /home/odeili/project_career_build/Manga/OX/smartcontract/odx/sources/datatypes.move:12:10
+   [0m[34m│[0m
+[0m[34m12[0m [0m[34m│[0m use std::[0m[33mvector[0m;
+   [0m[34m│[0m          [0m[33m^^^^^^[0m [0m[33mUnused 'use' of alias 'vector'. Consider removing it[0m
+   [0m[34m│[0m
+   [0m[34m=[0m This alias does not shadow the built-in type 'vector' in type annotations.
+   [0m[34m=[0m This warning can be suppressed with '#[allow(unused_use)]' applied to the 'module' or module member ('const', 'fun', or 'struct')
+
+[0m[1m[38;5;11mwarning[W09011][0m[1m: unused constant[0m
+   [0m[34m┌─[0m /home/odeili/project_career_build/Manga/OX/smartcontract/odx/sources/blob_storage.move:43:7
+   [0m[34m│[0m
+[0m[34m43[0m [0m[34m│[0m const [0m[33mE_BLOB_NOT_FOUND[0m: u64 = 1;
+   [0m[34m│[0m       [0m[33m^^^^^^^^^^^^^^^^[0m [0m[33mThe constant 'E_BLOB_NOT_FOUND' is never used. Consider removing it.[0m
+   [0m[34m│[0m
+   [0m[34m=[0m This warning can be suppressed with '#[allow(unused_const)]' applied to the 'module' or module member ('const', 'fun', or 'struct')
+
+[0m[1m[38;5;11mwarning[Lint W99010][0m[1m: unnecessary `entry` on a `public` function[0m
+   [0m[34m┌─[0m /home/odeili/project_career_build/Manga/OX/smartcontract/odx/sources/blob_storage.move:81:8
+   [0m[34m│[0m
+[0m[34m81[0m [0m[34m│[0m public [0m[33mentry[0m fun store_blob(
+   [0m[34m│[0m        [0m[33m^^^^^[0m [0m[33m`entry` on `public` functions limits composability as it adds restrictions, e.g. the type of each return value must have `drop`. `entry` on `public` is only meaningful in niche scenarios.[0m
+   [0m[34m│[0m
+   [0m[34m=[0m `public` functions can be called from PTBs. `entry` can be used to allow non-`public` functions to be called from PTBs, but it adds restrictions on the usage of input arguments and on the type of return values. Unless this `public` function interacts with an intricate set of other `entry` functions, the `entry` modifier should be removed.
+   [0m[34m=[0m This warning can be suppressed with '#[allow(lint(public_entry))]' applied to the 'module' or module member ('const', 'fun', or 'struct')
+
+[0m[1m[38;5;11mwarning[W09011][0m[1m: unused constant[0m
+   [0m[34m┌─[0m /home/odeili/project_career_build/Manga/OX/smartcontract/odx/sources/oracle.move:43:7
+   [0m[34m│[0m
+[0m[34m43[0m [0m[34m│[0m const [0m[33mE_METRICS_NOT_FOUND[0m: u64 = 0;
+   [0m[34m│[0m       [0m[33m^^^^^^^^^^^^^^^^^^^[0m [0m[33mThe constant 'E_METRICS_NOT_FOUND' is never used. Consider removing it.[0m
+   [0m[34m│[0m
+   [0m[34m=[0m This warning can be suppressed with '#[allow(unused_const)]' applied to the 'module' or module member ('const', 'fun', or 'struct')
+
+[0m[1m[38;5;11mwarning[W09011][0m[1m: unused constant[0m
+   [0m[34m┌─[0m /home/odeili/project_career_build/Manga/OX/smartcontract/odx/sources/oracle.move:44:7
+   [0m[34m│[0m
+[0m[34m44[0m [0m[34m│[0m const [0m[33mE_PRICE_NOT_FOUND[0m: u64 = 1;
+   [0m[34m│[0m       [0m[33m^^^^^^^^^^^^^^^^^[0m [0m[33mThe constant 'E_PRICE_NOT_FOUND' is never used. Consider removing it.[0m
+   [0m[34m│[0m
+   [0m[34m=[0m This warning can be suppressed with '#[allow(unused_const)]' applied to the 'module' or module member ('const', 'fun', or 'struct')
+
+[0m[1m[38;5;11mwarning[Lint W99010][0m[1m: unnecessary `entry` on a `public` function[0m
+    [0m[34m┌─[0m /home/odeili/project_career_build/Manga/OX/smartcontract/odx/sources/oracle.move:117:8
+    [0m[34m│[0m
+[0m[34m117[0m [0m[34m│[0m public [0m[33mentry[0m fun initialize_token_price(
+    [0m[34m│[0m        [0m[33m^^^^^[0m [0m[33m`entry` on `public` functions limits composability as it adds restrictions, e.g. the type of each return value must have `drop`. `entry` on `public` is only meaningful in niche scenarios.[0m
+    [0m[34m│[0m
+    [0m[34m=[0m `public` functions can be called from PTBs. `entry` can be used to allow non-`public` functions to be called from PTBs, but it adds restrictions on the usage of input arguments and on the type of return values. Unless this `public` function interacts with an intricate set of other `entry` functions, the `entry` modifier should be removed.
+    [0m[34m=[0m This warning can be suppressed with '#[allow(lint(public_entry))]' applied to the 'module' or module member ('const', 'fun', or 'struct')
+
+[0m[1m[38;5;11mwarning[Lint W99010][0m[1m: unnecessary `entry` on a `public` function[0m
+    [0m[34m┌─[0m /home/odeili/project_career_build/Manga/OX/smartcontract/odx/sources/oracle.move:219:8
+    [0m[34m│[0m
+[0m[34m219[0m [0m[34m│[0m public [0m[33mentry[0m fun update_engagement_metrics(
+    [0m[34m│[0m        [0m[33m^^^^^[0m [0m[33m`entry` on `public` functions limits composability as it adds restrictions, e.g. the type of each return value must have `drop`. `entry` on `public` is only meaningful in niche scenarios.[0m
+    [0m[34m│[0m
+    [0m[34m=[0m `public` functions can be called from PTBs. `entry` can be used to allow non-`public` functions to be called from PTBs, but it adds restrictions on the usage of input arguments and on the type of return values. Unless this `public` function interacts with an intricate set of other `entry` functions, the `entry` modifier should be removed.
+    [0m[34m=[0m This warning can be suppressed with '#[allow(lint(public_entry))]' applied to the 'module' or module member ('const', 'fun', or 'struct')
+
+[0m[1m[38;5;11mwarning[Lint W99010][0m[1m: unnecessary `entry` on a `public` function[0m
+    [0m[34m┌─[0m /home/odeili/project_career_build/Manga/OX/smartcontract/odx/sources/oracle.move:335:8
+    [0m[34m│[0m
+[0m[34m335[0m [0m[34m│[0m public [0m[33mentry[0m fun recalculate_price(
+    [0m[34m│[0m        [0m[33m^^^^^[0m [0m[33m`entry` on `public` functions limits composability as it adds restrictions, e.g. the type of each return value must have `drop`. `entry` on `public` is only meaningful in niche scenarios.[0m
+    [0m[34m│[0m
+    [0m[34m=[0m `public` functions can be called from PTBs. `entry` can be used to allow non-`public` functions to be called from PTBs, but it adds restrictions on the usage of input arguments and on the type of return values. Unless this `public` function interacts with an intricate set of other `entry` functions, the `entry` modifier should be removed.
+    [0m[34m=[0m This warning can be suppressed with '#[allow(lint(public_entry))]' applied to the 'module' or module member ('const', 'fun', or 'struct')
+
+[0m[1m[38;5;11mwarning[W09001][0m[1m: unused alias[0m
+   [0m[34m┌─[0m /home/odeili/project_career_build/Manga/OX/smartcontract/odx/sources/token.move:14:22
+   [0m[34m│[0m
+[0m[34m14[0m [0m[34m│[0m use odx::datatypes::{[0m[33mSelf[0m, IPToken, IPTokenMetadata};
+   [0m[34m│[0m                      [0m[33m^^^^[0m [0m[33mUnused 'use' of alias 'datatypes'. Consider removing it[0m
+   [0m[34m│[0m
+   [0m[34m=[0m This warning can be suppressed with '#[allow(unused_use)]' applied to the 'module' or module member ('const', 'fun', or 'struct')
+
+[0m[1m[38;5;11mwarning[Lint W99010][0m[1m: unnecessary `entry` on a `public` function[0m
+   [0m[34m┌─[0m /home/odeili/project_career_build/Manga/OX/smartcontract/odx/sources/token.move:99:8
+   [0m[34m│[0m
+[0m[34m99[0m [0m[34m│[0m public [0m[33mentry[0m fun create_ip_token(
+   [0m[34m│[0m        [0m[33m^^^^^[0m [0m[33m`entry` on `public` functions limits composability as it adds restrictions, e.g. the type of each return value must have `drop`. `entry` on `public` is only meaningful in niche scenarios.[0m
+   [0m[34m│[0m
+   [0m[34m=[0m `public` functions can be called from PTBs. `entry` can be used to allow non-`public` functions to be called from PTBs, but it adds restrictions on the usage of input arguments and on the type of return values. Unless this `public` function interacts with an intricate set of other `entry` functions, the `entry` modifier should be removed.
+   [0m[34m=[0m This warning can be suppressed with '#[allow(lint(public_entry))]' applied to the 'module' or module member ('const', 'fun', or 'struct')
+
+Failed to build Move modules: Compilation error.

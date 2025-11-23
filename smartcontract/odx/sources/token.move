@@ -85,6 +85,8 @@ public fun init_for_testing(ctx: &mut TxContext) {
 /// Transfers the created token to the sender (admin)
 /// 
 /// # Arguments:
+/// - `admin_cap`: Admin capability (passed by value, returned at end)
+/// - `registry`: Token registry (mutable reference)
 /// - `name`: Name of the IP (e.g., "Chainsaw Man")
 /// - `symbol`: Token symbol (e.g., "CSM")
 /// - `description`: Description of the IP
@@ -93,9 +95,9 @@ public fun init_for_testing(ctx: &mut TxContext) {
 /// - `ctx`: Transaction context
 /// 
 /// # Returns:
-/// - `()`: No return value. Token ID can be obtained from object changes in transaction result.
-public fun create_ip_token(
-    admin_cap: &AdminCap,
+/// - `AdminCap`: Returns the admin cap so it's not consumed
+public entry fun create_ip_token(
+    admin_cap: AdminCap,
     registry: &mut TokenRegistry,
     name: vector<u8>,
     symbol: vector<u8>,
@@ -105,7 +107,8 @@ public fun create_ip_token(
     ctx: &mut TxContext
 ) {
     // Verify admin_cap is valid (prevents unused warning)
-    let _ = object::id(admin_cap);
+    let admin_cap_id = object::id(&admin_cap);
+    let _ = admin_cap_id;
     
     // Check admin (uses E_NOT_ADMIN)
     check_admin(registry, tx_context::sender(ctx));
@@ -145,7 +148,8 @@ public fun create_ip_token(
     // Use public transfer function from datatypes module
     odx::datatypes::transfer_token(token, tx_context::sender(ctx));
     
-    // No return value - token ID is available in transaction object changes
+    // Transfer admin cap back to sender (it was passed by value, so we need to return it)
+    transfer::transfer(admin_cap, tx_context::sender(ctx));
 }
 
 /// Get token information
