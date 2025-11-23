@@ -112,23 +112,41 @@ export class PriceFeedService {
       
       logger.info(`Updating prices for ${tokens.length} tokens`);
       
+      if (tokens.length === 0) {
+        logger.warn('No tokens found. Price feed will have no data until tokens are created.');
+        return { successful: 0, failed: 0, tokens: 0 };
+      }
+      
       // Update each token's price
       const updates = await Promise.allSettled(
-        tokens.map(token => this.updatePriceForToken(token.id, token.name))
+        tokens.map(token => {
+          const tokenId = token.id || token.tokenId;
+          const tokenName = token.name || token.symbol || 'Unknown';
+          return this.updatePriceForToken(tokenId, tokenName);
+        })
       );
       
       const successful = updates.filter(u => u.status === 'fulfilled').length;
       const failed = updates.filter(u => u.status === 'rejected').length;
       
-      logger.info(`Price update complete: ${successful} successful, ${failed} failed`);
+      // Log failed updates for debugging
+      updates.forEach((update, index) => {
+        if (update.status === 'rejected') {
+          const token = tokens[index];
+          logger.error(`Failed to update price for token ${token?.id || token?.tokenId}:`, update.reason);
+        }
+      });
+      
+      logger.info(`Price update complete: ${successful} successful, ${failed} failed out of ${tokens.length} tokens`);
       
       // Broadcast updates to connected clients
       this.broadcastPriceUpdates();
       
-      return { successful, failed };
+      return { successful, failed, tokens: tokens.length };
     } catch (error) {
       logger.error('Error updating all prices:', error);
-      throw error;
+      // Don't throw - allow service to continue running
+      return { successful: 0, failed: 0, tokens: 0, error: error.message };
     }
   }
 
@@ -137,6 +155,10 @@ export class PriceFeedService {
    */
   async updatePriceForToken(ipTokenId, tokenName) {
     try {
+      if (!ipTokenId) {
+        throw new Error('ipTokenId is required');
+      }
+      
       logger.debug(`Updating price for token: ${tokenName} (${ipTokenId})`);
       
       // Get current price from contract (if exists)
@@ -144,12 +166,19 @@ export class PriceFeedService {
       let basePrice = null;
       try {
         basePrice = await contractService.getPrice(ipTokenId);
+        logger.debug(`Found existing price for ${ipTokenId}: ${basePrice}`);
       } catch (error) {
         logger.debug(`No existing price for ${ipTokenId}, will calculate from base`);
       }
       
       // Get engagement metrics from posts, likes, comments
       const engagementMetrics = await this.getEngagementMetrics(ipTokenId);
+      logger.debug(`Engagement metrics for ${ipTokenId}:`, {
+        totalEngagement: engagementMetrics.totalEngagement,
+        posts: engagementMetrics.postCount,
+        likes: engagementMetrics.likeCount,
+        comments: engagementMetrics.commentCount,
+      });
       
       // Get external metrics from Nautilus (if enabled)
       let nautilusMetrics = [];
@@ -159,6 +188,7 @@ export class PriceFeedService {
           name: tokenName,
           sources: ['myanimelist', 'anilist'],
         });
+        logger.debug(`Nautilus metrics for ${tokenName}: ${nautilusMetrics.length} sources`);
       } catch (error) {
         logger.debug(`Nautilus metrics unavailable for ${tokenName}:`, error.message);
       }
@@ -174,13 +204,14 @@ export class PriceFeedService {
       // Get or create OHLC data
       const ohlc = this.getOrCreateOHLC(ipTokenId, newPrice);
       
-      // Update current price cache
+      // Update current price cache (ensure ipTokenId is stored correctly)
       this.currentPrices.set(ipTokenId, {
         price: newPrice,
         timestamp: Date.now(),
         ohlc,
         metrics: engagementMetrics,
         nautilusMetrics,
+        tokenName, // Store token name for reference
       });
       
       // Add to price history
@@ -193,7 +224,7 @@ export class PriceFeedService {
         volume: engagementMetrics.totalEngagement,
       });
       
-      logger.debug(`Price updated for ${tokenName}: ${newPrice / 1e9} SUI`);
+      logger.info(`Price updated for ${tokenName} (${ipTokenId}): ${newPrice / 1e9} SUI`);
       
       return {
         ipTokenId,
@@ -203,6 +234,22 @@ export class PriceFeedService {
       };
     } catch (error) {
       logger.error(`Error updating price for ${ipTokenId}:`, error);
+      // Initialize with minimum price if update fails
+      const minPrice = this.config.minPrice;
+      const fallbackOHLC = {
+        open: minPrice,
+        high: minPrice,
+        low: minPrice,
+        close: minPrice,
+        timestamp: Date.now(),
+      };
+      this.currentPrices.set(ipTokenId, {
+        price: minPrice,
+        timestamp: Date.now(),
+        ohlc: fallbackOHLC,
+        metrics: { totalEngagement: 0 },
+        error: error.message,
+      });
       throw error;
     }
   }
@@ -481,12 +528,27 @@ export class PriceFeedService {
    * Broadcast price updates to all connected clients
    */
   broadcastPriceUpdates() {
+    // Ensure we always include ipTokenId in the updates
     const updates = Array.from(this.currentPrices.entries()).map(([ipTokenId, data]) => ({
-      ipTokenId,
+      ipTokenId: ipTokenId, // Explicitly include ipTokenId
       price: data.price,
       timestamp: data.timestamp,
-      ohlc: data.ohlc,
+      ohlc: data.ohlc || {
+        open: data.price,
+        high: data.price,
+        low: data.price,
+        close: data.price,
+        timestamp: data.timestamp,
+      },
     }));
+    
+    // Only broadcast if we have updates
+    if (updates.length === 0) {
+      logger.debug('No price updates to broadcast');
+      return;
+    }
+    
+    logger.debug(`Broadcasting ${updates.length} price updates`);
     
     // Broadcast to WebSocket connections
     for (const connection of this.connections) {

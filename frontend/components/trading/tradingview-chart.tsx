@@ -36,19 +36,34 @@ export function TradingViewChart({
       return;
     }
 
-    // Load TradingView library from CDN
-    // Note: For production, you should download and host the library files
-    // The free version is available at: https://www.tradingview.com/charting-library/
-    const script = document.createElement('script');
-    script.src = 'https://charting-library.tradingview-widget.com/charting_library/charting_library.standalone.js';
-    script.async = true;
-    script.onload = () => {
+    // Load TradingView library
+    // Note: The TradingView Charting Library requires you to download and host it yourself
+    // The CDN version is limited. For full functionality, download from:
+    // https://www.tradingview.com/charting-library/
+    // and place it in frontend/public/charting_library/
+    
+    // Try to load from local path first (if library is self-hosted)
+    const localScript = document.createElement('script');
+    localScript.src = '/charting_library/charting_library.standalone.js';
+    localScript.async = true;
+    localScript.onload = () => {
       setIsLibraryLoaded(true);
     };
-    script.onerror = () => {
-      setError('Failed to load TradingView library. Please ensure you have the library files.');
+    localScript.onerror = () => {
+      // Fallback: Try CDN (limited functionality)
+      console.warn('Local TradingView library not found, trying CDN (limited functionality)...');
+      const cdnScript = document.createElement('script');
+      cdnScript.src = 'https://charting-library.tradingview-widget.com/charting_library/charting_library.standalone.js';
+      cdnScript.async = true;
+      cdnScript.onload = () => {
+        setIsLibraryLoaded(true);
+      };
+      cdnScript.onerror = () => {
+        setError('Failed to load TradingView library. Please download and host the library files in /public/charting_library/');
+      };
+      document.head.appendChild(cdnScript);
     };
-    document.head.appendChild(script);
+    document.head.appendChild(localScript);
 
     return () => {
       if (script.parentNode) {
@@ -80,7 +95,10 @@ export function TradingViewChart({
       datafeedRef.current = datafeed;
 
       // Create TradingView widget
-      const widget = new window.TradingView.widget({
+      // Note: TradingView Charting Library requires local files
+      // For now, we'll use a simplified approach without the full library
+      // The CDN version is limited, so we'll fall back to canvas chart
+      const widgetConfig: any = {
         container: containerRef.current,
         locale: 'en',
         disabled_features: [
@@ -117,9 +135,7 @@ export function TradingViewChart({
         symbol: `${symbol}/SUI`,
         interval: '1',
         datafeed: datafeed,
-        library_path: '/charting_library/',
         theme: 'dark',
-        custom_css_url: '/tradingview-custom.css',
         overrides: {
           'paneProperties.background': '#0f0f14',
           'paneProperties.backgroundType': 'solid',
@@ -135,7 +151,18 @@ export function TradingViewChart({
           backgroundColor: '#0f0f14',
           foregroundColor: '#ffffff',
         },
-      });
+      };
+
+      // Add custom CSS if available (optional)
+      // The CSS file should be in public/tradingview-custom.css
+      // widgetConfig.custom_css_url = '/tradingview-custom.css';
+      
+      // Note: library_path is only needed if you've downloaded and self-hosted
+      // the TradingView Charting Library. For CDN usage, omit this.
+      // If you have the library in public/charting_library/, uncomment:
+      // widgetConfig.library_path = '/charting_library/';
+
+      const widget = new window.TradingView.widget(widgetConfig);
 
       widgetRef.current = widget;
 
@@ -169,10 +196,13 @@ export function TradingViewChart({
   if (error) {
     return (
       <div className="flex items-center justify-center h-full bg-[#0f0f14] text-red-400">
-        <div className="text-center">
-          <p className="mb-2">{error}</p>
-          <p className="text-sm text-zinc-500">
-            To use TradingView charts, you need to download the Charting Library from{' '}
+        <div className="text-center p-4">
+          <p className="mb-2 font-semibold">{error}</p>
+          <p className="text-sm text-zinc-500 mb-4">
+            TradingView Charting Library is not available. Using canvas chart instead.
+          </p>
+          <p className="text-xs text-zinc-600">
+            To enable TradingView charts, download the library from{' '}
             <a
               href="https://www.tradingview.com/charting-library/"
               target="_blank"
@@ -181,7 +211,7 @@ export function TradingViewChart({
             >
               TradingView
             </a>
-            {' '}and place it in the public folder.
+            {' '}and place it in <code className="bg-zinc-900 px-1 rounded">frontend/public/charting_library/</code>
           </p>
         </div>
       </div>

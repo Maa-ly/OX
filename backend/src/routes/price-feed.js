@@ -161,6 +161,26 @@ router.post('/update-all', async (req, res, next) => {
 });
 
 /**
+ * GET /api/price-feed/init
+ * Initialize prices for all tokens (useful for first-time setup)
+ */
+router.get('/init', async (req, res, next) => {
+  try {
+    logger.info('Manual price feed initialization triggered');
+    const result = await priceFeedService.updateAllPrices();
+    
+    res.json({
+      success: true,
+      message: 'Price feed initialized',
+      ...result,
+    });
+  } catch (error) {
+    logger.error('Error initializing price feed:', error);
+    next(error);
+  }
+});
+
+/**
  * GET /api/price-feed/config
  * Get price feed configuration
  */
@@ -219,15 +239,29 @@ router.get('/stream', (req, res) => {
   // Add SSE connection to price feed service
   priceFeedService.addSSEConnection(res, listener);
   
-  // Send current prices immediately
+  // Send current prices immediately (ensure ipTokenId is included)
   const currentPrices = Array.from(priceFeedService.currentPrices.entries()).map(([ipTokenId, data]) => ({
-    ipTokenId,
+    ipTokenId: ipTokenId, // Explicitly include ipTokenId
     price: data.price,
     timestamp: data.timestamp,
-    ohlc: data.ohlc,
+    ohlc: data.ohlc || {
+      open: data.price,
+      high: data.price,
+      low: data.price,
+      close: data.price,
+      timestamp: data.timestamp,
+    },
   }));
   
-  res.write(`data: ${JSON.stringify({ type: 'price_update', data: currentPrices })}\n\n`);
+  if (currentPrices.length > 0) {
+    res.write(`data: ${JSON.stringify({ type: 'price_update', data: currentPrices })}\n\n`);
+  } else {
+    // If no prices yet, trigger an update
+    logger.info('No current prices available, triggering initial update...');
+    priceFeedService.updateAllPrices().catch(err => {
+      logger.error('Error in initial price update for SSE:', err);
+    });
+  }
   
   // Handle client disconnect
   req.on('close', () => {

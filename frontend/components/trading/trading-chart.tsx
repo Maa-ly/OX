@@ -24,10 +24,35 @@ export function TradingChart({
   isFullscreen = false,
   onToggleFullscreen,
 }: TradingChartProps) {
-  // Use TradingView chart if available, otherwise fallback to canvas
-  const [useTradingView] = useState(true);
+  // Check if TradingView is available
+  const [useTradingView, setUseTradingView] = useState(false);
+  const [tradingViewAvailable, setTradingViewAvailable] = useState(false);
 
-  if (useTradingView && ipTokenId) {
+  useEffect(() => {
+    // Check if TradingView library is loaded
+    if (typeof window !== 'undefined') {
+      let attempts = 0;
+      const maxAttempts = 5; // Try for 5 seconds
+      
+      const checkTradingView = () => {
+        if (window.TradingView) {
+          setTradingViewAvailable(true);
+          setUseTradingView(true);
+        } else if (attempts < maxAttempts) {
+          attempts++;
+          setTimeout(checkTradingView, 1000);
+        } else {
+          // TradingView not available, will use canvas fallback
+          setTradingViewAvailable(false);
+          setUseTradingView(false);
+        }
+      };
+      checkTradingView();
+    }
+  }, []);
+
+  // Use TradingView chart if available and library is loaded, otherwise fallback to canvas
+  if (useTradingView && tradingViewAvailable && ipTokenId && typeof window !== 'undefined' && window.TradingView) {
     return (
       <TradingViewChart
         symbol={symbol}
