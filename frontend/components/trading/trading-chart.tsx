@@ -98,16 +98,38 @@ function CanvasChart({
     const loadPriceData = async () => {
       try {
         setLoading(true);
+        console.log('[TradingChart] Loading price data for token:', ipTokenId);
         
         // Load current price
         const price = await getCurrentPrice(ipTokenId);
-        setCurrentPrice(price);
+        console.log('[TradingChart] Current price loaded:', price);
+        if (price) {
+          setCurrentPrice(price);
+          
+          // If no history, create initial point from current price
+          setPriceHistory(prev => {
+            if (prev.length === 0) {
+              return [{
+                timestamp: price.timestamp,
+                open: price.ohlc.open,
+                high: price.ohlc.high,
+                low: price.ohlc.low,
+                close: price.price,
+                volume: 0,
+              }];
+            }
+            return prev;
+          });
+        }
         
         // Load price history
         const history = await getPriceHistory(ipTokenId, 100);
-        setPriceHistory(history);
+        console.log('[TradingChart] Price history loaded:', history.length, 'points');
+        if (history.length > 0) {
+          setPriceHistory(history);
+        }
       } catch (error) {
-        console.error('Error loading price data:', error);
+        console.error('[TradingChart] Error loading price data:', error);
       } finally {
         setLoading(false);
       }
@@ -120,24 +142,29 @@ function CanvasChart({
     unsubscribe = sse.subscribe((prices) => {
       const tokenPrice = prices.find(p => p.ipTokenId === ipTokenId);
       if (tokenPrice) {
+        console.log('[TradingChart] Received price update:', tokenPrice);
         setCurrentPrice(tokenPrice);
         
         // Add to history if it's a new price point
         setPriceHistory(prev => {
           const lastPoint = prev[prev.length - 1];
+          // Always add if no history, or if timestamp is newer
           if (!lastPoint || tokenPrice.timestamp > lastPoint.timestamp) {
-            // Add new point to history
-            return [...prev, {
+            const newPoint = {
               timestamp: tokenPrice.timestamp,
               open: tokenPrice.ohlc.open,
               high: tokenPrice.ohlc.high,
               low: tokenPrice.ohlc.low,
               close: tokenPrice.price,
               volume: 0, // Volume not available in current price data
-            }].slice(-100); // Keep last 100 points
+            };
+            console.log('[TradingChart] Adding price point to history:', newPoint);
+            return [...prev, newPoint].slice(-100); // Keep last 100 points
           }
           return prev;
         });
+      } else {
+        console.log('[TradingChart] No price update found for token:', ipTokenId);
       }
     });
 
@@ -192,7 +219,20 @@ function CanvasChart({
       }
 
       // Use real price data if available
-      const dataToRender = priceHistory.length > 0 ? priceHistory : [];
+      // If no history but we have current price, create a data point from it
+      let dataToRender = priceHistory.length > 0 ? priceHistory : [];
+      
+      if (dataToRender.length === 0 && currentPrice) {
+        // Create initial data point from current price
+        dataToRender = [{
+          timestamp: currentPrice.timestamp,
+          open: currentPrice.ohlc.open,
+          high: currentPrice.ohlc.high,
+          low: currentPrice.ohlc.low,
+          close: currentPrice.price,
+          volume: 0,
+        }];
+      }
       
       if (dataToRender.length === 0) {
         // Show loading or no data message
@@ -315,7 +355,7 @@ function CanvasChart({
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [symbol, timeframe, chartType, priceHistory, loading]);
+  }, [symbol, timeframe, chartType, priceHistory, loading, currentPrice]);
 
   return (
     <div className="flex flex-col h-full bg-[#0a0a0f]">
