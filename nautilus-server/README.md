@@ -9,3 +9,29 @@ This repository includes a reproducible build template for AWS Nitro Enclaves, a
 
 ## Contact Us
 For questions about Nautilus, use case discussions, or integration support, contact the Nautilus team on [Sui Discord](https://discord.com/channels/916379725201563759/1361500579603546223).
+
+
+Features
+--------
+
+- This crate is configured to build and run the integrated MyAnimeList
+  handler only. The repository no longer contains the other example
+  handlers (seal/twitter/weather) and the build is focused on the
+  `myanimelist` integration.
+
+Build & Run
+-----------
+
+From the crate directory:
+
+```bash
+cd c:/Users/Likem/Documents/hacks/OX_2/nautilus-server/src/nautilus-server
+cargo run
+```
+
+If you need to provide an API key to the enclave code:
+
+```bash
+export API_KEY=your_key_here   # bash/WSL
+cargo run
+```

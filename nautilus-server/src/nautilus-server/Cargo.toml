@@ -27,11 +27,11 @@ nsm_api = { git = "https://github.com/aws/aws-nitro-enclaves-nsm-api.git/", rev 
 bcs = "0.1.6"
 lazy_static = "1.4"
 uuid = { version = "1.0", features = ["v4"] }
-regex = { version = "1.5", optional = true }
+regex = { version = "1.5" }
 
-sui-sdk-types = { version = "0.1.0", features = ["serde", "hash"], optional = true }
-sui-crypto = { version = "0.1.0", features = ["ed25519"], optional = true }
-seal-sdk = { git = "https://github.com/MystenLabs/seal", rev = "cdb6ddf104eca6055d69080608da010a83d736bf", package = "seal-sdk", optional = true }
+[features]
+# Default builds the crate with the integrated MyAnimeList handler only.
+default = ["myanimelist"]
 
-#[features]
-# feature flags removed: enclave now ships a single integrated MyAnimeList handler
+# Feature to enable the MyAnimeList handler (default)
+myanimelist = []
