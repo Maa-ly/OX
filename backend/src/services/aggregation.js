@@ -42,18 +42,22 @@ export class AggregationService {
   }
 
   /**
-   * Combine Walrus (user) metrics with Nautilus (external) metrics
+   * Combine Walrus (user) metrics with Nautilus (external) metrics and Oracle metrics
    * Creates comprehensive metrics that reflect both community engagement and external truth
    * 
    * @param {Object} walrusMetrics - Metrics from user contributions (Walrus)
    * @param {Array} nautilusMetrics - Array of signed metrics from external sources (Nautilus)
+   * @param {Object} oracleMetrics - Metrics from oracle service (Reddit, Instagram, oracle-metrics)
    * @returns {Object} Combined metrics
    */
-  combineMetrics(walrusMetrics, nautilusMetrics = []) {
-    logger.info(`Combining Walrus metrics with ${nautilusMetrics.length} Nautilus source(s)`);
+  combineMetrics(walrusMetrics, nautilusMetrics = [], oracleMetrics = {}) {
+    logger.info(`Combining Walrus metrics with ${nautilusMetrics.length} Nautilus source(s) and oracle metrics`);
 
     // Aggregate external metrics from multiple sources
     const externalMetrics = this.aggregateExternalMetrics(nautilusMetrics);
+    
+    // Process oracle metrics (Reddit, Instagram, project metrics)
+    const oracleEngagement = this.processOracleMetrics(oracleMetrics);
 
     // Combine user and external metrics
     const combined = {
@@ -72,14 +76,23 @@ export class AggregationService {
       external_trending_score: externalMetrics.trending_score || 0,
       external_sources_count: nautilusMetrics.length,
 
-      // Combined metrics (weighted average)
+      // Oracle metrics (from Reddit, Instagram, project)
+      oracle_total_posts: oracleEngagement.total_posts || 0,
+      oracle_total_likes: oracleEngagement.total_likes || 0,
+      oracle_total_comments: oracleEngagement.total_comments || 0,
+      oracle_total_engagement: oracleEngagement.total_engagement || 0,
+      
+      // Combined metrics (weighted average including oracle data)
+      // Include oracle engagement in total engagements
+      combined_total_engagements: (walrusMetrics.total_engagements || 0) + (oracleEngagement.total_engagement || 0),
+      
       combined_rating: this.combineRatings(
         walrusMetrics.average_rating,
         externalMetrics.average_rating,
         0.6, // 60% weight on user data, 40% on external
       ),
       combined_popularity: this.combinePopularity(
-        walrusMetrics.total_engagements,
+        (walrusMetrics.total_engagements || 0) + (oracleEngagement.total_engagement || 0),
         externalMetrics.popularity_score,
         0.6,
       ),
@@ -87,6 +100,7 @@ export class AggregationService {
         walrusMetrics.growth_rate,
         externalMetrics.trending_score,
         0.6,
+        oracleEngagement.growth_rate,
       ),
 
       // Verification data
@@ -198,22 +212,112 @@ export class AggregationService {
   }
 
   /**
-   * Combine user growth rate with external trending
+   * Combine user growth rate with external trending and oracle growth
    * @param {number} userGrowthRate - User growth rate (scaled by 100)
    * @param {number} externalTrending - External trending score
    * @param {number} userWeight - Weight for user data
+   * @param {number} oracleGrowthRate - Oracle growth rate (scaled by 100)
    * @returns {number} Combined growth rate (scaled by 100)
    */
-  combineGrowthRates(userGrowthRate, externalTrending, userWeight = 0.6) {
+  combineGrowthRates(userGrowthRate, externalTrending, userWeight = 0.6, oracleGrowthRate = 0) {
     // Normalize external trending to growth rate scale
     const normalizedExternal = Math.min((externalTrending / 100) * 10000, 10000);
     
-    if (userGrowthRate === 0 && normalizedExternal === 0) return 0;
-    if (userGrowthRate === 0) return normalizedExternal;
-    if (normalizedExternal === 0) return userGrowthRate;
-
-    const combined = (userGrowthRate * userWeight) + (normalizedExternal * (1 - userWeight));
+    // Include oracle growth rate in the combination (weighted average)
+    const weights = {
+      user: userWeight * 0.7, // 70% of user weight
+      external: (1 - userWeight) * 0.7, // 70% of external weight
+      oracle: 0.3, // 30% weight on oracle
+    };
+    
+    const combined = (userGrowthRate * weights.user) + 
+                     (normalizedExternal * weights.external) + 
+                     (oracleGrowthRate * weights.oracle);
+    
+    if (combined === 0 && userGrowthRate === 0 && normalizedExternal === 0 && oracleGrowthRate === 0) return 0;
+    
     return Math.floor(combined);
+  }
+
+  /**
+   * Process oracle metrics from Reddit, Instagram, and project metrics
+   * @param {Object} oracleMetrics - Oracle metrics object
+   * @returns {Object} Processed engagement metrics
+   */
+  processOracleMetrics(oracleMetrics) {
+    if (!oracleMetrics || Object.keys(oracleMetrics).length === 0) {
+      return {
+        total_posts: 0,
+        total_likes: 0,
+        total_comments: 0,
+        total_engagement: 0,
+        growth_rate: 0,
+      };
+    }
+
+    let totalPosts = 0;
+    let totalLikes = 0;
+    let totalComments = 0;
+    const timestamps = [];
+
+    // Process Reddit posts
+    if (oracleMetrics.reddit?.posts) {
+      const redditPosts = oracleMetrics.reddit.posts;
+      totalPosts += redditPosts.length;
+      redditPosts.forEach((post) => {
+        totalLikes += post.score || post.ups || 0;
+        totalComments += post.comments || 0;
+        if (post.timestamp) timestamps.push(post.timestamp);
+      });
+    }
+
+    // Process Instagram posts
+    if (oracleMetrics.instagram?.posts) {
+      const instagramPosts = oracleMetrics.instagram.posts;
+      totalPosts += instagramPosts.length;
+      instagramPosts.forEach((post) => {
+        totalLikes += post.likes || 0;
+        totalComments += post.comments || 0;
+        if (post.timestamp) timestamps.push(post.timestamp);
+      });
+    }
+
+    // Process project metrics (from oracle-metrics endpoint)
+    if (oracleMetrics.projectMetrics) {
+      const pm = oracleMetrics.projectMetrics;
+      totalPosts += pm.totalPosts || 0;
+      totalLikes += pm.totalLikes || 0;
+      totalComments += pm.totalComments || 0;
+    }
+
+    // Calculate total engagement (posts + likes + comments)
+    const totalEngagement = totalPosts + totalLikes + totalComments;
+
+    // Calculate growth rate based on timestamp distribution
+    let growthRate = 0;
+    if (timestamps.length > 1) {
+      const now = Date.now();
+      const oneWeekAgo = now - 7 * 24 * 60 * 60 * 1000;
+      const twoWeeksAgo = now - 14 * 24 * 60 * 60 * 1000;
+
+      const thisWeek = timestamps.filter((ts) => ts >= oneWeekAgo && ts < now).length;
+      const lastWeek = timestamps.filter((ts) => ts >= twoWeeksAgo && ts < oneWeekAgo).length;
+
+      if (lastWeek > 0) {
+        const growth = ((thisWeek - lastWeek) / lastWeek) * 100;
+        growthRate = Math.floor(growth * 100); // Scale by 100
+      } else if (thisWeek > 0) {
+        growthRate = 10000; // 100% growth
+      }
+    }
+
+    return {
+      total_posts: totalPosts,
+      total_likes: totalLikes,
+      total_comments: totalComments,
+      total_engagement: totalEngagement,
+      growth_rate: growthRate,
+    };
   }
 
   /**

@@ -1,32 +1,186 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { TradingViewChart } from "./tradingview-chart";
+import { 
+  getPriceHistory, 
+  getCurrentPrice, 
+  getPriceFeedSSE,
+  formatPrice,
+  type PriceHistoryPoint,
+  type PriceData 
+} from "@/lib/utils/price-feed";
 
 interface TradingChartProps {
   symbol: string;
+  ipTokenId?: string; // IP token ID for fetching price data
   isFullscreen?: boolean;
   onToggleFullscreen?: () => void;
 }
 
 export function TradingChart({
   symbol,
+  ipTokenId,
+  isFullscreen = false,
+  onToggleFullscreen,
+}: TradingChartProps) {
+  // Check if TradingView is available
+  const [useTradingView, setUseTradingView] = useState(false);
+  const [tradingViewAvailable, setTradingViewAvailable] = useState(false);
+
+  useEffect(() => {
+    // Check if TradingView library is loaded
+    if (typeof window !== 'undefined') {
+      let attempts = 0;
+      const maxAttempts = 5; // Try for 5 seconds
+      
+      const checkTradingView = () => {
+        if (window.TradingView) {
+          setTradingViewAvailable(true);
+          setUseTradingView(true);
+        } else if (attempts < maxAttempts) {
+          attempts++;
+          setTimeout(checkTradingView, 1000);
+        } else {
+          // TradingView not available, will use canvas fallback
+          setTradingViewAvailable(false);
+          setUseTradingView(false);
+        }
+      };
+      checkTradingView();
+    }
+  }, []);
+
+  // Use TradingView chart if available and library is loaded, otherwise fallback to canvas
+  if (useTradingView && tradingViewAvailable && ipTokenId && typeof window !== 'undefined' && window.TradingView) {
+    return (
+      <TradingViewChart
+        symbol={symbol}
+        ipTokenId={ipTokenId}
+        isFullscreen={isFullscreen}
+        onToggleFullscreen={onToggleFullscreen}
+      />
+    );
+  }
+
+  // Fallback to original canvas implementation
+  return <CanvasChart symbol={symbol} ipTokenId={ipTokenId} isFullscreen={isFullscreen} onToggleFullscreen={onToggleFullscreen} />;
+}
+
+// Original canvas implementation (kept as fallback)
+function CanvasChart({
+  symbol,
+  ipTokenId,
   isFullscreen = false,
   onToggleFullscreen,
 }: TradingChartProps) {
   const [timeframe, setTimeframe] = useState("1h");
   const [chartType, setChartType] = useState("candles");
   const [showIndicators, setShowIndicators] = useState(false);
+  const [priceHistory, setPriceHistory] = useState<PriceHistoryPoint[]>([]);
+  const [currentPrice, setCurrentPrice] = useState<PriceData | null>(null);
+  const [loading, setLoading] = useState(true);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const animationFrameRef = useRef<number | null>(null);
 
   const timeframes = ["5m", "15m", "1h", "4h", "1D", "1W"];
 
+  // Load price history and subscribe to updates
+  useEffect(() => {
+    if (!ipTokenId) {
+      setLoading(false);
+      return;
+    }
+
+    let unsubscribe: (() => void) | null = null;
+
+    const loadPriceData = async () => {
+      try {
+        setLoading(true);
+        console.log('[TradingChart] Loading price data for token:', ipTokenId);
+        
+        // Load current price
+        const price = await getCurrentPrice(ipTokenId);
+        console.log('[TradingChart] Current price loaded:', price);
+        if (price) {
+          setCurrentPrice(price);
+          
+          // If no history, create initial point from current price
+          setPriceHistory(prev => {
+            if (prev.length === 0) {
+              return [{
+                timestamp: price.timestamp,
+                open: price.ohlc.open,
+                high: price.ohlc.high,
+                low: price.ohlc.low,
+                close: price.price,
+                volume: 0,
+              }];
+            }
+            return prev;
+          });
+        }
+        
+        // Load price history
+        const history = await getPriceHistory(ipTokenId, 100);
+        console.log('[TradingChart] Price history loaded:', history.length, 'points');
+        if (history.length > 0) {
+          setPriceHistory(history);
+        }
+      } catch (error) {
+        console.error('[TradingChart] Error loading price data:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadPriceData();
+
+    // Subscribe to real-time price updates
+    const sse = getPriceFeedSSE();
+    unsubscribe = sse.subscribe((prices) => {
+      const tokenPrice = prices.find(p => p.ipTokenId === ipTokenId);
+      if (tokenPrice) {
+        console.log('[TradingChart] Received price update:', tokenPrice);
+        setCurrentPrice(tokenPrice);
+        
+        // Add to history if it's a new price point
+        setPriceHistory(prev => {
+          const lastPoint = prev[prev.length - 1];
+          // Always add if no history, or if timestamp is newer
+          if (!lastPoint || tokenPrice.timestamp > lastPoint.timestamp) {
+            const newPoint = {
+              timestamp: tokenPrice.timestamp,
+              open: tokenPrice.ohlc.open,
+              high: tokenPrice.ohlc.high,
+              low: tokenPrice.ohlc.low,
+              close: tokenPrice.price,
+              volume: 0, // Volume not available in current price data
+            };
+            console.log('[TradingChart] Adding price point to history:', newPoint);
+            return [...prev, newPoint].slice(-100); // Keep last 100 points
+          }
+          return prev;
+        });
+      } else {
+        console.log('[TradingChart] No price update found for token:', ipTokenId);
+      }
+    });
+
+    return () => {
+      if (unsubscribe) {
+        unsubscribe();
+      }
+    };
+  }, [ipTokenId]);
+
+  // Draw chart
   useEffect(() => {
     const canvas = canvasRef.current;
     const container = containerRef.current;
     if (!canvas || !container) return;
 
-    // Set canvas size to match container
     const updateCanvasSize = () => {
       const rect = container.getBoundingClientRect();
       canvas.width = rect.width;
@@ -45,11 +199,11 @@ export function TradingChart({
       ctx.fillStyle = "#0f0f14";
       ctx.fillRect(0, 0, width, height);
 
+      // Draw grid
       ctx.strokeStyle = "#27272a";
       ctx.lineWidth = 1;
-
-      // Draw grid
       const gridSpacing = 50;
+      
       for (let i = gridSpacing; i <= height; i += gridSpacing) {
         ctx.beginPath();
         ctx.moveTo(0, i);
@@ -64,50 +218,144 @@ export function TradingChart({
         ctx.stroke();
       }
 
-      // Draw sample candles
-      const candles = Math.min(50, Math.floor(width / 15));
+      // Use real price data if available
+      // If no history but we have current price, create a data point from it
+      let dataToRender = priceHistory.length > 0 ? priceHistory : [];
+      
+      if (dataToRender.length === 0 && currentPrice) {
+        // Create initial data point from current price
+        dataToRender = [{
+          timestamp: currentPrice.timestamp,
+          open: currentPrice.ohlc.open,
+          high: currentPrice.ohlc.high,
+          low: currentPrice.ohlc.low,
+          close: currentPrice.price,
+          volume: 0,
+        }];
+      }
+      
+      if (dataToRender.length === 0) {
+        // Show loading or no data message
+        ctx.fillStyle = "#6b7280";
+        ctx.font = "16px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(
+          loading ? "Loading price data..." : "No price data available",
+          width / 2,
+          height / 2
+        );
+        return;
+      }
+
+      // Calculate price range
+      const prices = dataToRender.flatMap(point => [point.high, point.low]);
+      const minPrice = Math.min(...prices);
+      const maxPrice = Math.max(...prices);
+      const priceRange = maxPrice - minPrice || 1; // Avoid division by zero
+      
+      // Add padding (10% on top and bottom)
+      const padding = priceRange * 0.1;
+      const chartMinPrice = minPrice - padding;
+      const chartMaxPrice = maxPrice + padding;
+      const chartPriceRange = chartMaxPrice - chartMinPrice;
+
+      // Price to Y coordinate conversion
+      const priceToY = (price: number) => {
+        const normalized = (price - chartMinPrice) / chartPriceRange;
+        return height - (normalized * (height - 40)) - 20; // 20px padding top/bottom
+      };
+
+      // Draw candles or line
+      const candles = Math.min(dataToRender.length, Math.floor(width / 15));
       const candleWidth = width / candles;
       const candleBodyWidth = candleWidth * 0.7;
+      const startIndex = Math.max(0, dataToRender.length - candles);
 
-      for (let i = 0; i < candles; i++) {
-        const x = i * candleWidth + candleWidth / 2;
-        const basePrice = height * 0.5;
-        const priceRange = height * 0.3;
+      if (chartType === "candles") {
+        // Draw candlesticks
+        for (let i = 0; i < candles; i++) {
+          const dataIndex = startIndex + i;
+          const point = dataToRender[dataIndex];
+          if (!point) continue;
 
-        const open = basePrice + (Math.random() - 0.5) * priceRange;
-        const close = basePrice + (Math.random() - 0.5) * priceRange;
-        const high = Math.max(open, close) + Math.random() * priceRange * 0.2;
-        const low = Math.min(open, close) - Math.random() * priceRange * 0.2;
+          const x = i * candleWidth + candleWidth / 2;
+          const openY = priceToY(point.open);
+          const closeY = priceToY(point.close);
+          const highY = priceToY(point.high);
+          const lowY = priceToY(point.low);
 
-        const color = close > open ? "#22c55e" : "#ef4444";
+          const isGreen = point.close >= point.open;
+          const color = isGreen ? "#22c55e" : "#ef4444";
 
-        // Draw wick
-        ctx.strokeStyle = color;
-        ctx.lineWidth = Math.max(1, candleWidth * 0.1);
+          // Draw wick
+          ctx.strokeStyle = color;
+          ctx.lineWidth = Math.max(1, candleWidth * 0.1);
+          ctx.beginPath();
+          ctx.moveTo(x, highY);
+          ctx.lineTo(x, lowY);
+          ctx.stroke();
+
+          // Draw body
+          ctx.fillStyle = color;
+          const bodyTop = Math.min(openY, closeY);
+          const bodyBottom = Math.max(openY, closeY);
+          const bodyHeight = Math.max(1, bodyBottom - bodyTop);
+          ctx.fillRect(
+            x - candleBodyWidth / 2,
+            bodyTop,
+            candleBodyWidth,
+            bodyHeight
+          );
+        }
+      } else {
+        // Draw line chart
+        ctx.strokeStyle = "#3b82f6";
+        ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.moveTo(x, high);
-        ctx.lineTo(x, low);
-        ctx.stroke();
+        
+        for (let i = 0; i < candles; i++) {
+          const dataIndex = startIndex + i;
+          const point = dataToRender[dataIndex];
+          if (!point) continue;
 
-        // Draw body
-        ctx.fillStyle = color;
-        const bodyHeight = Math.abs(close - open) || 2;
-        ctx.fillRect(
-          x - candleBodyWidth / 2,
-          Math.min(open, close),
-          candleBodyWidth,
-          bodyHeight
-        );
+          const x = i * candleWidth + candleWidth / 2;
+          const y = priceToY(point.close);
+
+          if (i === 0) {
+            ctx.moveTo(x, y);
+          } else {
+            ctx.lineTo(x, y);
+          }
+        }
+        ctx.stroke();
+      }
+
+      // Draw price labels on the right
+      ctx.fillStyle = "#6b7280";
+      ctx.font = "12px sans-serif";
+      ctx.textAlign = "right";
+      
+      const labelCount = 5;
+      for (let i = 0; i <= labelCount; i++) {
+        const price = chartMaxPrice - (chartPriceRange * i / labelCount);
+        const y = priceToY(price);
+        ctx.fillText(formatPrice(price).toFixed(6), width - 10, y + 4);
       }
     };
 
     updateCanvasSize();
     window.addEventListener("resize", updateCanvasSize);
 
+      // Draw chart (no continuous animation loop, just redraw on data changes)
+      drawChart();
+
     return () => {
       window.removeEventListener("resize", updateCanvasSize);
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
     };
-  }, [symbol, timeframe, chartType]);
+  }, [symbol, timeframe, chartType, priceHistory, loading, currentPrice]);
 
   return (
     <div className="flex flex-col h-full bg-[#0a0a0f]">

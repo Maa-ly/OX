@@ -64,26 +64,70 @@ router.post('/index', async (req, res, next) => {
       authorAddress: post?.authorAddress,
     });
 
-    // Index the post for each IP token (already stored on Walrus by user)
+    // Ensure post metadata includes likes/comments structure
+    // CRITICAL: originalBlobId should point to the media/blobId if media exists, otherwise the post/blobId
+    const originalBlobId = post?.mediaBlobId || blobId; // Use media/blobId as original if media exists
+    
+    const postMetadata = {
+      post_type: 'discover_post',
+      engagement_type: 'post',
+      mediaType: post?.mediaType || 'text',
+      timestamp: post?.timestamp || Date.now(),
+      authorAddress: post?.authorAddress,
+      author: post?.author,
+      content: post?.content || '',
+      mediaUrl: post?.mediaUrl,
+      mediaBlobId: post?.mediaBlobId,
+      ipTokenIds: post?.ipTokenIds || [],
+      tags: post?.tags || [],
+      likes: post?.likes ?? 0,
+      comments: post?.comments ?? 0,
+      likesList: post?.likesList || [],
+      commentsList: post?.commentsList || [],
+      // Reference to the original blob (media/blobId for media posts, post/blobId for text posts)
+      // This is what the search uses to find the post when given a media/blobId
+      // CRITICAL: For media posts, this should be the mediaBlobId so likes/comments can find the post
+      originalBlobId: originalBlobId,
+      // Also store the post/blobId for reference
+      postBlobId: blobId,
+    };
+
+    // Store the full post metadata on Walrus so likes/comments can be tracked
+    // This creates a metadata blob that includes all post info + engagement data
+    // Use HTTP API method (same as uploads) instead of storeContribution
+    let metadataBlobId = blobId;
+    try {
+      const jsonData = JSON.stringify(postMetadata, null, 2);
+      // Use backend wallet from ADMIN_PRIVATE_KEY to fund metadata blob creation
+      const storedMetadata = await walrusService.storeBlob(jsonData, {
+        permanent: true,
+        epochs: 365,
+        // Use backend wallet address from ADMIN_PRIVATE_KEY - this wallet funds the operation
+        userAddress: walrusService.walletAddress, // Backend wallet pays for storing metadata
+      });
+      metadataBlobId = storedMetadata.blobId || blobId;
+      logger.info(`Stored post metadata on Walrus via HTTP API: ${metadataBlobId} (original blob: ${blobId}, funded by wallet: ${walrusService.walletAddress})`);
+    } catch (metadataError) {
+      logger.warn(`Failed to store post metadata on Walrus via HTTP API, using original blobId:`, {
+        error: metadataError?.message,
+        blobId,
+      });
+      // Continue with original blobId if metadata storage fails
+    }
+
+    // Index the post for each IP token using the metadata blobId
     // This makes the post visible to everyone when they query posts
     for (const ipTokenId of ipTokenIds) {
       try {
         await indexerService.indexContribution(
           ipTokenId,
-          blobId,
-          {
-            post_type: 'discover_post',
-            engagement_type: 'post',
-            mediaType: post?.mediaType || 'text',
-            timestamp: post?.timestamp || Date.now(),
-            authorAddress: post?.authorAddress,
-            ...post,
-          }
+          metadataBlobId, // Use metadata blobId instead of original blobId
+          postMetadata
         );
-        logger.info(`Indexed post ${blobId} for token ${ipTokenId}`);
+        logger.info(`Indexed post ${metadataBlobId} for token ${ipTokenId}`);
       } catch (indexError) {
         // Log but don't fail - post is still stored on Walrus
-        logger.warn(`Failed to index post ${blobId} for token ${ipTokenId}:`, {
+        logger.warn(`Failed to index post ${metadataBlobId} for token ${ipTokenId}:`, {
           error: indexError?.message,
           stack: indexError?.stack,
         });
@@ -95,15 +139,17 @@ router.post('/index', async (req, res, next) => {
 
     res.json({
       success: true,
-      blobId,
+      blobId: metadataBlobId, // Return metadata blobId (includes likes/comments structure)
+      originalBlobId: blobId, // Also return original blobId for reference
       indexed: true,
       ipTokenIds,
       post: {
-        ...post,
-        walrus_blob_id: blobId,
-        walrus_cid: blobId,
-        blobId,
-        id: blobId,
+        ...postMetadata,
+        walrus_blob_id: metadataBlobId,
+        walrus_cid: metadataBlobId,
+        blobId: metadataBlobId,
+        id: metadataBlobId,
+        originalBlobId: blobId,
       },
     });
   } catch (error) {
@@ -356,27 +402,94 @@ router.get('/', async (req, res, next) => {
       const contractBlobs = await contractService.getAllBlobs();
       logger.info(`Found ${contractBlobs.length} blobs from contract`);
       
-      // Read each blob from Walrus
+      // CRITICAL: Build a map of originalBlobId -> metadata blob from indexer cache
+      // The indexer cache stores metadata blobs with originalBlobId pointing to contract blobs
+      // NOTE: For media posts, originalBlobId = mediaBlobId, but contract stores postBlobId
+      // So we need to map by BOTH postBlobId AND mediaBlobId (and originalBlobId)
+      const metadataMapByOriginal = new Map();
+      for (const [metadataBlobId, metadata] of indexerService.blobCache.entries()) {
+        const originalBlobId = metadata.originalBlobId || metadata.mediaBlobId;
+        const postBlobId = metadata.postBlobId || metadata.blobId;
+        const mediaBlobId = metadata.mediaBlobId || metadata.media_blob_id;
+        
+        // Create metadata post object
+        const metadataPost = {
+          ...metadata,
+          blobId: metadataBlobId, // Use metadata blobId as primary blobId
+          id: metadataBlobId,
+          metadataBlobId: metadataBlobId, // Explicit metadata blobId
+          originalBlobId: originalBlobId || postBlobId || metadataBlobId, // Original blobId
+        };
+        
+        // Map by postBlobId (what's stored on contract)
+        if (postBlobId) {
+          metadataMapByOriginal.set(postBlobId, metadataPost);
+          logger.debug(`Mapped metadata blob ${metadataBlobId} -> postBlobId ${postBlobId}`);
+        }
+        
+        // Map by mediaBlobId (for media posts, this is what originalBlobId points to)
+        if (mediaBlobId && mediaBlobId !== postBlobId) {
+          metadataMapByOriginal.set(mediaBlobId, metadataPost);
+          logger.debug(`Mapped metadata blob ${metadataBlobId} -> mediaBlobId ${mediaBlobId}`);
+        }
+        
+        // Map by originalBlobId (for consistency)
+        if (originalBlobId && originalBlobId !== postBlobId && originalBlobId !== mediaBlobId) {
+          metadataMapByOriginal.set(originalBlobId, metadataPost);
+          logger.debug(`Mapped metadata blob ${metadataBlobId} -> originalBlobId ${originalBlobId}`);
+        }
+        
+        // Also map by metadataBlobId itself in case contract has the metadata blobId
+        metadataMapByOriginal.set(metadataBlobId, metadataPost);
+      }
+      logger.info(`Found ${metadataMapByOriginal.size} metadata blob mappings in indexer cache (mapped by postBlobId/mediaBlobId/originalBlobId)`);
+      
+      // Read each blob from Walrus and map to metadata blobs
       for (const blob of contractBlobs) {
         try {
-          const contribution = await walrusService.readContribution(blob.blobId);
-          if (contribution.post_type === 'discover_post' || contribution.engagement_type === 'post') {
+          // Check if we have a metadata blob for this contract blobId
+          const metadataPost = metadataMapByOriginal.get(blob.blobId);
+          
+          if (metadataPost) {
+            // Use metadata blob - it has likes/comments structure
             // Override content with contract text if available
             if (blob.text) {
-              contribution.content = blob.text;
+              metadataPost.content = blob.text;
             }
             // Override timestamp with contract timestamp if available
             if (blob.timestamp) {
-              contribution.timestamp = blob.timestamp;
+              metadataPost.timestamp = blob.timestamp;
             }
-            allPosts.push(contribution);
+            allPosts.push(metadataPost);
+            logger.debug(`Using metadata blob ${metadataPost.blobId} for contract blob ${blob.blobId}`);
+          } else {
+            // No metadata blob found - try reading original blob (might be a text post without metadata yet)
+            try {
+              const contribution = await walrusService.readContribution(blob.blobId);
+              if (contribution.post_type === 'discover_post' || contribution.engagement_type === 'post') {
+                // Override content with contract text if available
+                if (blob.text) {
+                  contribution.content = blob.text;
+                }
+                // Override timestamp with contract timestamp if available
+                if (blob.timestamp) {
+                  contribution.timestamp = blob.timestamp;
+                }
+                // Set originalBlobId so frontend knows this is the original (not metadata)
+                contribution.originalBlobId = blob.blobId;
+                allPosts.push(contribution);
+              }
+            } catch (readError) {
+              // Likely binary media blob - skip it (we need metadata blob for likes/comments)
+              logger.debug(`Skipping contract blob ${blob.blobId} (no metadata blob found):`, readError.message);
+            }
           }
-        } catch (readError) {
-          logger.debug(`Failed to read blob ${blob.blobId}:`, readError);
+        } catch (error) {
+          logger.debug(`Error processing contract blob ${blob.blobId}:`, error.message);
         }
       }
       
-      logger.info(`Found ${allPosts.length} posts from contract blobs`);
+      logger.info(`Found ${allPosts.length} posts from contract blobs (${metadataMapByOriginal.size} with metadata blobs)`);
     } catch (error) {
       logger.warn('Error reading from contract, falling back to Sui query:', error);
       // Fallback: Query Walrus/Sui directly
@@ -527,44 +640,242 @@ router.post('/:blobId/like', async (req, res, next) => {
             }
           }
           
-          logger.info(`Searching through ${searchBlobIds.size} blob IDs for post referencing media ${blobId}`);
+          // CRITICAL: Check indexer cache first - metadata blobs are cached there!
+          logger.info(`[SEARCH] Checking indexer cache for metadata blob referencing ${blobId}...`);
+          for (const [cachedBlobId, cachedMetadata] of indexerService.blobCache.entries()) {
+            // Check all possible blobId references: postBlobId (contract), originalBlobId, mediaBlobId, or the cached blobId itself
+            const postBlobId = cachedMetadata.postBlobId || cachedMetadata.blobId;
+            const originalBlobId = cachedMetadata.originalBlobId;
+            const mediaBlobId = cachedMetadata.mediaBlobId || cachedMetadata.media_blob_id;
+            
+            if (postBlobId === blobId || 
+                originalBlobId === blobId || 
+                mediaBlobId === blobId ||
+                cachedBlobId === blobId) {
+              logger.info(`[SEARCH] ✓ Found post in indexer cache: ${cachedBlobId} (postBlobId: ${postBlobId}, originalBlobId: ${originalBlobId}, mediaBlobId: ${mediaBlobId})`);
+              foundPost = cachedMetadata;
+              actualBlobId = cachedBlobId; // Use metadata blobId for updating likes/comments
+              break;
+            }
+          }
           
-          // Search through all blob IDs
+          logger.info(`Searching through ${searchBlobIds.size} blob IDs for post referencing media/original blob ${blobId}`);
+          
+          // Search through all blob IDs to find the post metadata blob
+          // IMPORTANT: Skip binary blobs, only check JSON/metadata blobs
+          logger.info(`Checking ${searchBlobIds.size} candidate blobs for metadata referencing ${blobId}...`);
           for (const postBlobId of searchBlobIds) {
             try {
-              const candidatePost = await walrusService.readContribution(postBlobId);
-              if (candidatePost.mediaBlobId === blobId || candidatePost.media_blob_id === blobId) {
+              // Read raw blob first to check if it's binary
+              const candidateBlobData = await walrusService.readBlob(postBlobId);
+              const candidateJson = candidateBlobData.toString('utf-8');
+              
+              // Check if it's binary data (images, videos, etc.) - skip these
+              const isBinary = candidateJson.includes('\x00') || 
+                               candidateJson.startsWith('RIFF') ||
+                               candidateJson.startsWith('\x89PNG') ||
+                               candidateJson.startsWith('GIF') ||
+                               candidateJson.startsWith('ÿØÿà') ||
+                               candidateJson.startsWith('\xFF\xD8\xFF') ||
+                               candidateJson.startsWith('JFIF') ||
+                               (candidateJson.length > 100 && candidateJson.match(/[^\x20-\x7E\n\r\t]/));
+              
+              if (isBinary) {
+                // Skip binary blobs - they're media files, not post metadata
+                logger.info(`[SEARCH] Skipping binary blob ${postBlobId} (media file)`);
+                continue;
+              }
+              
+              // Try to parse as JSON (post metadata)
+              const candidatePost = JSON.parse(candidateJson);
+              
+              // Log what we found - use INFO so we can see it
+              logger.info(`[SEARCH] Checking blob ${postBlobId}: post_type=${candidatePost.post_type}, engagement_type=${candidatePost.engagement_type}, mediaBlobId=${candidatePost.mediaBlobId}, originalBlobId=${candidatePost.originalBlobId}`);
+              
+              // Check if this post references the blobId (could be media, originalBlobId, or the post itself)
+              if (candidatePost.mediaBlobId === blobId || 
+                  candidatePost.media_blob_id === blobId ||
+                  candidatePost.originalBlobId === blobId ||
+                  postBlobId === blobId) {
                 foundPost = candidatePost;
                 actualBlobId = postBlobId;
-                logger.info(`Found post ${postBlobId} that references media ${blobId}`);
+                logger.info(`[SEARCH] ✓ Found post ${postBlobId} that references blob ${blobId} (mediaBlobId: ${candidatePost.mediaBlobId}, originalBlobId: ${candidatePost.originalBlobId})`);
                 break;
+              } else {
+                logger.info(`[SEARCH] ✗ Blob ${postBlobId} does not reference ${blobId} (mediaBlobId: ${candidatePost.mediaBlobId}, originalBlobId: ${candidatePost.originalBlobId})`);
               }
             } catch (e) {
-              // Try reading as plain JSON
-              try {
-                const candidateBlobData = await walrusService.readBlob(postBlobId);
-                const candidateJson = candidateBlobData.toString('utf-8');
-                // Check if it's binary before trying to parse
-                if (candidateJson.length > 0 && !candidateJson.includes('\x00')) {
-                  const candidatePost = JSON.parse(candidateJson);
-                  if (candidatePost.mediaBlobId === blobId || candidatePost.media_blob_id === blobId) {
+              // Skip this blob if it's binary or invalid JSON - try next one
+              logger.info(`[SEARCH] Error checking blob ${postBlobId}: ${e.message}`);
+              continue;
+            }
+          }
+          
+          // Always try searching all contract blobs if post not found
+          if (!foundPost) {
+            logger.info(`Post not found in initial search, querying ALL contract blobs for metadata...`);
+            try {
+              const { contractService } = await import('../services/contract.js');
+              const contractBlobs = await contractService.getAllBlobs();
+              logger.info(`Searching through ${contractBlobs.length} contract blobs for metadata referencing ${blobId}...`);
+              
+              for (const contractBlob of contractBlobs) {
+                try {
+                  // First check if blob is binary before trying to read as contribution
+                  const rawBlobData = await walrusService.readBlob(contractBlob.blobId);
+                  const blobString = rawBlobData.toString('utf-8');
+                  
+                  // Check if it's binary data (images, videos, etc.)
+                  const isBinary = blobString.includes('\x00') || 
+                                   blobString.startsWith('RIFF') ||
+                                   blobString.startsWith('\x89PNG') ||
+                                   blobString.startsWith('GIF') ||
+                                   blobString.startsWith('ÿØÿà') ||
+                                   blobString.startsWith('\xFF\xD8\xFF') ||
+                                   blobString.startsWith('JFIF') ||
+                                   (blobString.length > 100 && blobString.match(/[^\x20-\x7E\n\r\t]/));
+                  
+                  if (isBinary) {
+                    // Skip binary blobs - they're media, not post metadata
+                    logger.info(`[FALLBACK] Skipping binary contract blob ${contractBlob.blobId} (media file)`);
+                    continue;
+                  }
+                  
+                  // Try to parse as JSON
+                  const candidatePost = JSON.parse(blobString);
+                  
+                  // Log what we found - use INFO so we can see it
+                  logger.info(`[FALLBACK] Checking contract blob ${contractBlob.blobId}: post_type=${candidatePost.post_type}, engagement_type=${candidatePost.engagement_type}, mediaBlobId=${candidatePost.mediaBlobId}, originalBlobId=${candidatePost.originalBlobId}, blobId=${candidatePost.blobId}`);
+                  
+                  // Check if this post references the blobId (with backward compatibility for missing originalBlobId)
+                  const matches = candidatePost.originalBlobId === blobId || 
+                                  candidatePost.mediaBlobId === blobId ||
+                                  candidatePost.media_blob_id === blobId ||
+                                  candidatePost.blobId === blobId ||
+                                  contractBlob.blobId === blobId ||
+                                  // Backward compatibility: if originalBlobId is undefined but mediaBlobId matches
+                                  (!candidatePost.originalBlobId && candidatePost.mediaBlobId === blobId);
+                  
+                  if ((candidatePost.post_type === 'discover_post' || candidatePost.engagement_type === 'post') && matches) {
                     foundPost = candidatePost;
-                    actualBlobId = postBlobId;
-                    logger.info(`Found post ${postBlobId} that references media ${blobId}`);
+                    actualBlobId = contractBlob.blobId;
+                    logger.info(`[FALLBACK] ✓ Found post ${actualBlobId} by querying contract blobs directly (matches ${blobId})`);
+                    break;
+                  } else {
+                    logger.info(`[FALLBACK] ✗ Contract blob ${contractBlob.blobId} does not reference ${blobId}`);
+                  }
+                } catch (e) {
+                  // Skip binary blobs or invalid JSON - try next one
+                  logger.info(`[FALLBACK] Error checking contract blob ${contractBlob.blobId}: ${e.message}`);
+                  continue;
+                }
+              }
+            } catch (queryError) {
+              logger.error('Failed to query contract blobs:', queryError.message);
+            }
+          }
+          
+          // Final fallback: Query Walrus/Sui directly to find metadata blobs not on contract
+          // Metadata blobs are stored on Walrus but might not be on the contract
+          if (!foundPost) {
+            logger.info(`[FINAL] Post still not found in contract blobs, querying Walrus/Sui directly for metadata blobs...`);
+            try {
+              // Query all posts from Walrus/Sui (includes metadata blobs not on contract)
+              const allWalrusPosts = await walrusService.getAllPosts({ limit: 1000 });
+              logger.info(`[FINAL] Found ${allWalrusPosts.length} posts from Walrus/Sui to search for metadata...`);
+              
+              // Search through all posts to find one that references this blobId
+              for (const candidatePost of allWalrusPosts) {
+                try {
+                  const candidateBlobId = candidatePost.blobId || candidatePost.id;
+                  logger.info(`[FINAL] Checking Walrus post ${candidateBlobId}: mediaBlobId=${candidatePost.mediaBlobId}, originalBlobId=${candidatePost.originalBlobId}`);
+                  
+                  // Check if this post references the blobId
+                  const matches = candidatePost.mediaBlobId === blobId || 
+                                  candidatePost.media_blob_id === blobId ||
+                                  candidatePost.originalBlobId === blobId ||
+                                  candidateBlobId === blobId;
+                  
+                  if (matches) {
+                    foundPost = candidatePost;
+                    actualBlobId = candidateBlobId;
+                    logger.info(`[FINAL] ✓ Found post ${actualBlobId} by querying Walrus/Sui directly (references ${blobId})`);
                     break;
                   }
+                } catch (e) {
+                  logger.info(`[FINAL] Error checking Walrus post: ${e.message}`);
+                  continue;
                 }
-              } catch (e2) {
-                // Skip this blob
               }
+              
+              // If still not found and blobId is media, try creating metadata blob on-the-fly
+              // This handles posts created before metadata blob feature was added
+              if (!foundPost) {
+                logger.info(`[FINAL] Metadata blob not found for ${blobId}. This might be an old post without metadata blob.`);
+                logger.info(`[FINAL] Note: For new posts, metadata blobs are created during indexing. For old posts, they may need to be re-indexed.`);
+              }
+            } catch (queryError) {
+              logger.error('[FINAL] Failed to query Walrus/Sui for posts:', queryError.message);
+            }
+          }
+          
+          // If still not found, try to create metadata blob on-the-fly from contract data
+          // This handles old posts that don't have metadata blobs
+          if (!foundPost) {
+            logger.info(`[AUTO-CREATE] Metadata blob not found for ${blobId}. Attempting to create one from contract data...`);
+            
+            try {
+              // Check if this blobId exists on the contract
+              const { contractService } = await import('../services/contract.js');
+              const contractBlobs = await contractService.getAllBlobs();
+              const contractBlob = contractBlobs.find(b => b.blobId === blobId);
+              
+              if (contractBlob && contractBlob.text) {
+                // This is a text post, use it directly
+                logger.info(`[AUTO-CREATE] Found contract blob with text, creating metadata blob...`);
+                const postMetadata = {
+                  post_type: 'discover_post',
+                  engagement_type: 'post',
+                  mediaType: 'text',
+                  timestamp: contractBlob.timestamp || Date.now(),
+                  authorAddress: contractBlob.address || '0x0000000000000000000000000000000000000000',
+                  author: (contractBlob.address || '0x0000').slice(0, 6) + "..." + (contractBlob.address || '0000').slice(-4),
+                  content: contractBlob.text,
+                  ipTokenIds: ['all'], // Default to 'all' since we don't have this info
+                  tags: [],
+                  likes: 0,
+                  comments: 0,
+                  likesList: [],
+                  commentsList: [],
+                  originalBlobId: blobId,
+                  postBlobId: blobId,
+                };
+                
+                const jsonData = JSON.stringify(postMetadata, null, 2);
+                const storedMetadata = await walrusService.storeBlob(jsonData, {
+                  permanent: true,
+                  epochs: 365,
+                });
+                
+                foundPost = postMetadata;
+                actualBlobId = storedMetadata.blobId || blobId;
+                logger.info(`[AUTO-CREATE] ✓ Created metadata blob ${actualBlobId} for old post ${blobId}`);
+              } else {
+                // This might be a media blob - check if there's a post that references it
+                logger.warn(`[AUTO-CREATE] Cannot auto-create metadata blob: blobId ${blobId} is not on contract or has no text`);
+              }
+            } catch (autoCreateError) {
+              logger.error(`[AUTO-CREATE] Failed to auto-create metadata blob:`, autoCreateError.message);
             }
           }
           
           if (!foundPost) {
-            logger.error(`Could not find post for blobId ${blobId} (appears to be media)`);
+            logger.error(`Could not find or create post for blobId ${blobId} after searching contract blobs AND Walrus/Sui`);
+            logger.error(`This post may have been created before metadata blobs were implemented. The post needs to be re-indexed to create a metadata blob for likes/comments.`);
             return res.status(404).json({
               success: false,
-              error: 'Post not found. The blobId may be for media, not the post data.',
+              error: 'Post not found. The post may have been created before metadata blobs were implemented and needs to be re-indexed.',
+              details: 'Metadata blob not found. Please re-create or re-index this post to enable likes/comments.',
             });
           }
           
@@ -602,11 +913,40 @@ router.post('/:blobId/like', async (req, res, next) => {
       post.likes = (post.likes || 0) + 1;
     }
 
-    // Store updated post back to Walrus using the actual post blobId
-    // Note: This creates a new blob. In production, you might want to use a different approach
-    // like storing likes/comments separately or using on-chain storage
-    const updated = await walrusService.storeContribution(post);
-    const newBlobId = updated.walrus_blob_id || updated.walrus_cid || actualBlobId;
+    // Store updated post back to Walrus using HTTP API method (same as uploads)
+    // Convert post to JSON and store using HTTP API
+    let updated;
+    let newBlobId = actualBlobId;
+    
+    try {
+      const jsonData = JSON.stringify(post, null, 2);
+      // Use HTTP API method directly (same as uploads) - use backend wallet from ADMIN_PRIVATE_KEY
+      // This wallet pays for storing the updated post with likes/comments
+      updated = await walrusService.storeBlob(jsonData, {
+        permanent: true,
+        epochs: 365,
+        // Use backend wallet address from ADMIN_PRIVATE_KEY - this wallet funds the operation
+        userAddress: walrusService.walletAddress, // Backend wallet pays for storing likes/comments
+      });
+      newBlobId = updated.blobId || actualBlobId;
+      logger.info(`Successfully stored updated post with likes: ${post.likes}, new blobId: ${newBlobId} via HTTP API (funded by wallet: ${walrusService.walletAddress})`);
+    } catch (storeError) {
+      logger.error(`Failed to store updated post to Walrus via HTTP API:`, {
+        error: storeError.message,
+        stack: storeError.stack,
+        blobId: actualBlobId,
+        likes: post.likes,
+      });
+      
+      // Return error but include the updated like count so UI can update optimistically
+      return res.status(500).json({
+        success: false,
+        error: `Failed to store like on Walrus: ${storeError.message}`,
+        liked: !isLiked,
+        likes: post.likes, // Return updated count even if storage failed
+        blobId: actualBlobId, // Return original blobId
+      });
+    }
 
     res.json({
       success: true,
@@ -615,8 +955,18 @@ router.post('/:blobId/like', async (req, res, next) => {
       blobId: newBlobId,
     });
   } catch (error) {
-    logger.error(`Error liking post ${req.params.blobId}:`, error);
-    next(error);
+    logger.error(`Error liking post ${req.params.blobId}:`, {
+      error: error.message,
+      stack: error.stack,
+      name: error.name,
+    });
+    
+    // Return proper error response instead of using next(error)
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to like post',
+      details: error.stack,
+    });
   }
 });
 
@@ -657,40 +1007,66 @@ router.post('/:blobId/comment', async (req, res, next) => {
           post = JSON.parse(jsonData);
         } catch (parseError) {
           // It's likely binary media data, not a post
-          // Try to find the post that references this media blobId
+          // Try to find the post that references this media/blobId
           logger.info(`Blob ${blobId} appears to be media, searching for post that references it...`);
           
           let foundPost = null;
           const searchBlobIds = new Set();
           
-          // First, get all blob IDs from the contract (most reliable)
-          try {
-            const contractBlobs = await contractService.getAllBlobs();
-            for (const contractBlob of contractBlobs) {
-              searchBlobIds.add(contractBlob.blobId);
+          // CRITICAL: Check indexer cache first - metadata blobs are cached there!
+          logger.info(`[SEARCH] Checking indexer cache for metadata blob referencing ${blobId}...`);
+          for (const [cachedBlobId, cachedMetadata] of indexerService.blobCache.entries()) {
+            // Check all possible blobId references: postBlobId (contract), originalBlobId, mediaBlobId, or the cached blobId itself
+            const postBlobId = cachedMetadata.postBlobId || cachedMetadata.blobId;
+            const originalBlobId = cachedMetadata.originalBlobId;
+            const mediaBlobId = cachedMetadata.mediaBlobId || cachedMetadata.media_blob_id;
+            
+            if (postBlobId === blobId || 
+                originalBlobId === blobId || 
+                mediaBlobId === blobId ||
+                cachedBlobId === blobId) {
+              logger.info(`[SEARCH] ✓ Found post in indexer cache: ${cachedBlobId} (postBlobId: ${postBlobId}, originalBlobId: ${originalBlobId}, mediaBlobId: ${mediaBlobId})`);
+              foundPost = cachedMetadata;
+              actualBlobId = cachedBlobId; // Use metadata blobId for updating likes/comments
+              break;
             }
-            logger.info(`Found ${searchBlobIds.size} blob IDs from contract to search`);
-          } catch (contractError) {
-            logger.warn('Could not get blob IDs from contract, using index only:', contractError.message);
           }
           
-          // Also add blob IDs from the indexer
-          for (const [ipTokenId, blobIds] of indexerService.index.entries()) {
-            for (const postBlobId of blobIds) {
-              searchBlobIds.add(postBlobId);
+          // If not found in cache, search through contract and indexer blob IDs
+          if (!foundPost) {
+            // First, get all blob IDs from the contract (most reliable)
+            try {
+              const contractBlobs = await contractService.getAllBlobs();
+              for (const contractBlob of contractBlobs) {
+                searchBlobIds.add(contractBlob.blobId);
+              }
+              logger.info(`Found ${searchBlobIds.size} blob IDs from contract to search`);
+            } catch (contractError) {
+              logger.warn('Could not get blob IDs from contract, using index only:', contractError.message);
             }
+            
+            // Also add blob IDs from the indexer
+            for (const [ipTokenId, blobIds] of indexerService.index.entries()) {
+              for (const postBlobId of blobIds) {
+                searchBlobIds.add(postBlobId);
+              }
+            }
+            
+            logger.info(`Searching through ${searchBlobIds.size} blob IDs for post referencing media/original blob ${blobId}`);
           }
           
-          logger.info(`Searching through ${searchBlobIds.size} blob IDs for post referencing media ${blobId}`);
-          
-          // Search through all blob IDs
+          // Search through all blob IDs to find the post metadata blob
           for (const postBlobId of searchBlobIds) {
             try {
               const candidatePost = await walrusService.readContribution(postBlobId);
-              if (candidatePost.mediaBlobId === blobId || candidatePost.media_blob_id === blobId) {
+              // Check if this post references the blobId (could be media, originalBlobId, or the post itself)
+              if (candidatePost.mediaBlobId === blobId || 
+                  candidatePost.media_blob_id === blobId ||
+                  candidatePost.originalBlobId === blobId ||
+                  postBlobId === blobId) {
                 foundPost = candidatePost;
                 actualBlobId = postBlobId;
-                logger.info(`Found post ${postBlobId} that references media ${blobId}`);
+                logger.info(`Found post ${postBlobId} that references blob ${blobId} (mediaBlobId: ${candidatePost.mediaBlobId}, originalBlobId: ${candidatePost.originalBlobId})`);
                 break;
               }
             } catch (e) {
@@ -701,10 +1077,14 @@ router.post('/:blobId/comment', async (req, res, next) => {
                 // Check if it's binary before trying to parse
                 if (candidateJson.length > 0 && !candidateJson.includes('\x00')) {
                   const candidatePost = JSON.parse(candidateJson);
-                  if (candidatePost.mediaBlobId === blobId || candidatePost.media_blob_id === blobId) {
+                  // Check if this post references the blobId
+                  if (candidatePost.mediaBlobId === blobId || 
+                      candidatePost.media_blob_id === blobId ||
+                      candidatePost.originalBlobId === blobId ||
+                      postBlobId === blobId) {
                     foundPost = candidatePost;
                     actualBlobId = postBlobId;
-                    logger.info(`Found post ${postBlobId} that references media ${blobId}`);
+                    logger.info(`Found post ${postBlobId} that references blob ${blobId}`);
                     break;
                   }
                 }
@@ -714,8 +1094,39 @@ router.post('/:blobId/comment', async (req, res, next) => {
             }
           }
           
+          // Final fallback: Query Walrus/Sui directly to find metadata blobs not on contract
+          // Metadata blobs are stored on Walrus but might not be on the contract
           if (!foundPost) {
-            logger.error(`Could not find post for blobId ${blobId} (appears to be media)`);
+            logger.info(`Post still not found in contract blobs, querying Walrus/Sui directly for metadata blobs...`);
+            try {
+              // Query all posts from Walrus/Sui (includes metadata blobs not on contract)
+              const allWalrusPosts = await walrusService.getAllPosts({ limit: 1000 });
+              logger.info(`Found ${allWalrusPosts.length} posts from Walrus/Sui to search for metadata...`);
+              
+              // Search through all posts to find one that references this blobId
+              for (const candidatePost of allWalrusPosts) {
+                try {
+                  // Check if this post references the blobId
+                  if (candidatePost.mediaBlobId === blobId || 
+                      candidatePost.media_blob_id === blobId ||
+                      candidatePost.originalBlobId === blobId ||
+                      candidatePost.blobId === blobId) {
+                    foundPost = candidatePost;
+                    actualBlobId = candidatePost.blobId || candidatePost.id;
+                    logger.info(`Found post ${actualBlobId} by querying Walrus/Sui directly (references ${blobId})`);
+                    break;
+                  }
+                } catch (e) {
+                  continue;
+                }
+              }
+            } catch (queryError) {
+              logger.warn('Failed to query Walrus/Sui for posts:', queryError.message);
+            }
+          }
+          
+          if (!foundPost) {
+            logger.error(`Could not find post for blobId ${blobId} after searching all sources`);
             return res.status(404).json({
               success: false,
               error: 'Post not found. The blobId may be for media, not the post data.',
@@ -754,9 +1165,40 @@ router.post('/:blobId/comment', async (req, res, next) => {
     post.commentsList = [...commentsList, newComment];
     post.comments = (post.comments || 0) + 1;
 
-    // Store updated post back to Walrus using the actual post blobId
-    const updated = await walrusService.storeContribution(post);
-    const newBlobId = updated.walrus_blob_id || updated.walrus_cid || actualBlobId;
+    // Store updated post back to Walrus using HTTP API method (same as uploads)
+    // Convert post to JSON and store using HTTP API
+    let updated;
+    let newBlobId = actualBlobId;
+    
+    try {
+      const jsonData = JSON.stringify(post, null, 2);
+      // Use HTTP API method directly (same as uploads) - use backend wallet from ADMIN_PRIVATE_KEY
+      // This wallet pays for storing the updated post with comments
+      updated = await walrusService.storeBlob(jsonData, {
+        permanent: true,
+        epochs: 365,
+        // Use backend wallet address from ADMIN_PRIVATE_KEY - this wallet funds the operation
+        userAddress: walrusService.walletAddress, // Backend wallet pays for storing comments
+      });
+      newBlobId = updated.blobId || actualBlobId;
+      logger.info(`Successfully stored updated post with comments: ${post.comments}, new blobId: ${newBlobId} via HTTP API (funded by wallet: ${walrusService.walletAddress})`);
+    } catch (storeError) {
+      logger.error(`Failed to store updated post to Walrus via HTTP API:`, {
+        error: storeError.message,
+        stack: storeError.stack,
+        blobId: actualBlobId,
+        comments: post.comments,
+      });
+      
+      // Return error but include the updated comment so UI can update optimistically
+      return res.status(500).json({
+        success: false,
+        error: `Failed to store comment on Walrus: ${storeError.message}`,
+        comment: newComment,
+        comments: post.comments, // Return updated count even if storage failed
+        blobId: actualBlobId, // Return original blobId
+      });
+    }
 
     res.json({
       success: true,
@@ -765,8 +1207,18 @@ router.post('/:blobId/comment', async (req, res, next) => {
       blobId: newBlobId,
     });
   } catch (error) {
-    logger.error(`Error commenting on post ${req.params.blobId}:`, error);
-    next(error);
+    logger.error(`Error commenting on post ${req.params.blobId}:`, {
+      error: error.message,
+      stack: error.stack,
+      name: error.name,
+    });
+    
+    // Return proper error response instead of using next(error)
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to comment on post',
+      details: error.stack,
+    });
   }
 });
 

@@ -13,6 +13,7 @@ import {
 import { MobileBottomNav, MobileSidebar } from "@/components/mobile-nav";
 import { getIPTokens, type IPToken } from "@/lib/utils/api";
 import { CustomSelect } from "@/components/ui/custom-select";
+import { getPriceFeedSSE, getCurrentPrice, formatPrice, type PriceData } from "@/lib/utils/price-feed";
 
 const NavWalletButton = dynamic(
   () =>
@@ -42,6 +43,7 @@ export default function TradePage() {
   >("positions");
   const [isChartFullscreen, setIsChartFullscreen] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [priceData, setPriceData] = useState<Map<string, PriceData>>(new Map());
 
   // Load IP tokens on mount
   useEffect(() => {
@@ -51,17 +53,28 @@ export default function TradePage() {
         const ipTokens = await getIPTokens(true);
         setTokens(ipTokens);
 
+        // Load initial prices for all tokens
+        const priceMap = new Map<string, PriceData>();
+        for (const token of ipTokens) {
+          const price = await getCurrentPrice(token.id);
+          if (price) {
+            priceMap.set(token.id, price);
+          }
+        }
+        setPriceData(priceMap);
+
         // Transform first token to selected token format
         if (ipTokens.length > 0) {
           const firstToken = ipTokens[0];
+          const firstPrice = priceMap.get(firstToken.id);
           setSelectedToken({
             id: firstToken.id,
             symbol: firstToken.symbol,
             name: firstToken.name,
-            price: (firstToken.currentPrice || 0) / 1e9, // Convert from MIST to SUI
+            price: firstPrice ? formatPrice(firstPrice.price) : (firstToken.currentPrice || 0) / 1e9,
             change24h: firstToken.priceChange24h || 0,
             volume24h: 0, // TODO: Fetch from oracle
-            marketCap: (firstToken.currentPrice || 0) * (firstToken.circulatingSupply || 0) / 1e18, // Approximate
+            marketCap: (firstToken.currentPrice || 0) * (firstToken.circulatingSupply || 0) / 1e18,
           });
         }
       } catch (error) {
@@ -74,16 +87,54 @@ export default function TradePage() {
     loadTokens();
   }, []);
 
+  // Subscribe to real-time price updates
+  useEffect(() => {
+    const sse = getPriceFeedSSE();
+    const unsubscribe = sse.subscribe((prices) => {
+      setPriceData(prevPriceMap => {
+        const newPriceMap = new Map(prevPriceMap);
+        prices.forEach(price => {
+          const previousPrice = prevPriceMap.get(price.ipTokenId);
+          newPriceMap.set(price.ipTokenId, price);
+          
+          // Update selected token if it's the one being updated
+          if (selectedToken && price.ipTokenId === selectedToken.id) {
+            const priceChange = previousPrice 
+              ? ((price.price - previousPrice.price) / previousPrice.price) * 100
+              : 0;
+            
+            setSelectedToken(prev => prev ? {
+              ...prev,
+              price: formatPrice(price.price),
+              change24h: priceChange,
+            } : null);
+          }
+        });
+        return newPriceMap;
+      });
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [selectedToken]);
+
   // Handle token selection
   const handleTokenSelect = (tokenId: string) => {
     const token = tokens.find((t) => t.id === tokenId);
     if (token) {
+      const price = priceData.get(tokenId);
+      const previousPrice = selectedToken ? priceData.get(selectedToken.id) : null;
+      const priceChange = price && previousPrice
+        ? ((price.price - previousPrice.price) / previousPrice.price) * 100
+        : (token.priceChange24h || 0);
+      
       setSelectedToken({
         id: token.id,
         symbol: token.symbol,
         name: token.name,
-        price: (token.currentPrice || 0) / 1e9,
-        change24h: token.priceChange24h || 0,
+        price: price ? formatPrice(price.price) : (token.currentPrice || 0) / 1e9,
+        change24h: priceChange,
         volume24h: 0, // TODO: Fetch from oracle
         marketCap: (token.currentPrice || 0) * (token.circulatingSupply || 0) / 1e18,
       });
@@ -180,10 +231,10 @@ export default function TradePage() {
       {/* Main Trading Interface */}
       <div className="pt-16 h-screen flex flex-col">
         {/* Token Info Bar */}
-        <div className="border-b border-zinc-800 bg-[#0f0f14] px-4 lg:px-6 py-3">
+        <div className="border-b border-zinc-800 bg-[#0f0f14] px-4 lg:px-6 py-3 relative z-50">
           <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
             <div className="flex items-center gap-4 lg:gap-6 overflow-x-auto w-full lg:w-auto">
-              <div className="shrink-0">
+              <div className="shrink-0 relative z-[100]">
                 <div className="flex items-center gap-2 flex-wrap">
                   {/* Token Selector */}
                   {tokens.length > 0 && (
@@ -314,6 +365,7 @@ export default function TradePage() {
               {selectedToken ? (
                 <TradingChart
                   symbol={selectedToken.symbol}
+                  ipTokenId={selectedToken.id}
                   isFullscreen={isChartFullscreen}
                   onToggleFullscreen={() =>
                     setIsChartFullscreen(!isChartFullscreen)

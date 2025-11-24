@@ -11,6 +11,7 @@ import { useWalletAuth } from "@/lib/hooks/useWalletAuth";
 import { createBuyOrder, createSellOrder } from "@/lib/utils/contract";
 import { SuiClient, getFullnodeUrl } from "@mysten/sui/client";
 import { PACKAGE_ID } from "@/lib/utils/constants";
+import { getAllCurrentPrices, getPriceFeedSSE, formatPrice, type PriceData } from "@/lib/utils/price-feed";
 
 const NavWalletButton = dynamic(
   () =>
@@ -39,6 +40,7 @@ export default function MarketsPage() {
   >("marketCap");
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [markets, setMarkets] = useState<TokenMarket[]>([]);
+  const [priceData, setPriceData] = useState<Map<string, PriceData>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   
@@ -55,6 +57,47 @@ export default function MarketsPage() {
 
   useEffect(() => {
     loadMarkets();
+  }, []);
+
+  // Subscribe to real-time price updates
+  useEffect(() => {
+    const sse = getPriceFeedSSE();
+    const unsubscribe = sse.subscribe((prices) => {
+      setPriceData(prevPriceMap => {
+        const newPriceMap = new Map(prevPriceMap);
+        prices.forEach(price => {
+          newPriceMap.set(price.ipTokenId, price);
+        });
+        
+        // Update markets with new prices
+        setMarkets(prevMarkets => {
+          return prevMarkets.map(market => {
+            const price = newPriceMap.get(market.id);
+            if (price) {
+              const currentPrice = formatPrice(price.price);
+              const previousPrice = price.ohlc?.open ? formatPrice(price.ohlc.open) : currentPrice;
+              const priceChange = previousPrice > 0 
+                ? ((currentPrice - previousPrice) / previousPrice) * 100 
+                : market.change24h;
+              
+              return {
+                ...market,
+                price: currentPrice,
+                change24h: priceChange,
+                marketCap: currentPrice * (market.marketCap / (market.price || 1)), // Maintain market cap ratio
+              };
+            }
+            return market;
+          });
+        });
+        
+        return newPriceMap;
+      });
+    });
+
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
   // Load balances when token is selected
@@ -110,20 +153,102 @@ export default function MarketsPage() {
     }
   };
 
-  const openBuyModal = (token: TokenMarket) => {
+  const openBuyModal = async (token: TokenMarket) => {
     setSelectedToken(token);
     setModalType("buy");
     setQuantity("");
-    setPrice(token.price > 0 ? (token.price * 1e9).toString() : "");
+    
+    // Get actual price from contract (oracle)
+    let priceInMist = "";
+    try {
+      const { getTokenPrice } = await import('@/lib/utils/contract-read');
+      const contractPrice = await getTokenPrice(token.id);
+      
+      if (contractPrice && contractPrice > 0) {
+        // Contract price is in MIST (9-decimal format, scaled by 1e9)
+        priceInMist = Math.floor(contractPrice).toString();
+        console.log(`[openBuyModal] Got price from contract: ${contractPrice} MIST (${contractPrice / 1e9} SUI) for token ${token.id}`);
+      } else {
+        // Fallback to price feed or token price
+        const currentPrice = priceData.get(token.id);
+        if (currentPrice) {
+          const rawPrice = currentPrice.price;
+          if (rawPrice > 1e15) {
+            priceInMist = Math.floor(rawPrice / 1e9).toString();
+          } else {
+            priceInMist = Math.floor(rawPrice).toString();
+          }
+        } else if (token.price > 0) {
+          priceInMist = Math.floor(token.price * 1e9).toString();
+        }
+      }
+    } catch (error) {
+      console.warn(`[openBuyModal] Failed to get price from contract, using fallback:`, error);
+      // Fallback to price feed or token price
+      const currentPrice = priceData.get(token.id);
+      if (currentPrice) {
+        const rawPrice = currentPrice.price;
+        if (rawPrice > 1e15) {
+          priceInMist = Math.floor(rawPrice / 1e9).toString();
+        } else {
+          priceInMist = Math.floor(rawPrice).toString();
+        }
+      } else if (token.price > 0) {
+        priceInMist = Math.floor(token.price * 1e9).toString();
+      }
+    }
+    
+    setPrice(priceInMist);
     setModalError(null);
     setModalSuccess(null);
   };
 
-  const openSellModal = (token: TokenMarket) => {
+  const openSellModal = async (token: TokenMarket) => {
     setSelectedToken(token);
     setModalType("sell");
     setQuantity("");
-    setPrice(token.price > 0 ? (token.price * 1e9).toString() : "");
+    
+    // Get actual price from contract (oracle)
+    let priceInMist = "";
+    try {
+      const { getTokenPrice } = await import('@/lib/utils/contract-read');
+      const contractPrice = await getTokenPrice(token.id);
+      
+      if (contractPrice && contractPrice > 0) {
+        // Contract price is in MIST (9-decimal format, scaled by 1e9)
+        priceInMist = Math.floor(contractPrice).toString();
+        console.log(`[openSellModal] Got price from contract: ${contractPrice} MIST (${contractPrice / 1e9} SUI) for token ${token.id}`);
+      } else {
+        // Fallback to price feed or token price
+        const currentPrice = priceData.get(token.id);
+        if (currentPrice) {
+          const rawPrice = currentPrice.price;
+          if (rawPrice > 1e15) {
+            priceInMist = Math.floor(rawPrice / 1e9).toString();
+          } else {
+            priceInMist = Math.floor(rawPrice).toString();
+          }
+        } else if (token.price > 0) {
+          priceInMist = Math.floor(token.price * 1e9).toString();
+        }
+      }
+    } catch (error) {
+      console.warn(`[openSellModal] Failed to get price from contract, using fallback:`, error);
+      // Fallback to price feed or token price
+      const currentPrice = priceData.get(token.id);
+      if (currentPrice) {
+        const rawPrice = currentPrice.price;
+        if (rawPrice > 1e15) {
+          priceInMist = Math.floor(rawPrice / 1e9).toString();
+        } else {
+          priceInMist = Math.floor(rawPrice).toString();
+        }
+      } else if (token.price > 0) {
+        priceInMist = Math.floor(token.price * 1e9).toString();
+      }
+    }
+    
+    setPrice(priceInMist);
     setModalError(null);
     setModalSuccess(null);
   };
@@ -170,6 +295,7 @@ export default function MarketsPage() {
       }
 
       // Calculate total cost (price * quantity + fee)
+      // priceNum is already in MIST, quantityNum is a number
       // Fee is 1% (100 bps) of total cost
       const totalCost = BigInt(Math.floor(priceNum * quantityNum));
       const fee = totalCost * BigInt(100) / BigInt(10000); // 1% fee
@@ -190,11 +316,27 @@ export default function MarketsPage() {
       }
 
       // Create buy order
+      // Ensure price and quantity are valid integers
+      const priceInMist = Math.floor(priceNum);
+      const quantityInt = Math.floor(quantityNum);
+      
+      if (priceInMist <= 0 || quantityInt <= 0) {
+        throw new Error("Price and quantity must be positive integers");
+      }
+
+      console.log('[handleBuy] Creating buy order:', {
+        ipTokenId: selectedToken.id,
+        price: priceInMist,
+        quantity: quantityInt,
+        priceInSUI: (priceInMist / 1e9).toFixed(6),
+        totalCostInSUI: ((priceInMist * quantityInt) / 1e9).toFixed(6),
+      });
+
       const result = await createBuyOrder(
         {
           ipTokenId: selectedToken.id,
-          price: Math.floor(priceNum),
-          quantity: Math.floor(quantityNum),
+          price: priceInMist,
+          quantity: quantityInt,
           paymentCoinId: paymentCoin.coinObjectId,
         },
         wallet
@@ -292,32 +434,55 @@ export default function MarketsPage() {
       
       console.log('Valid tokens:', validTokens.length);
       
+      // Load initial prices from price feed
+      const prices = await getAllCurrentPrices();
+      const priceMap = new Map<string, PriceData>();
+      prices.forEach(price => {
+        priceMap.set(price.ipTokenId, price);
+      });
+      setPriceData(priceMap);
+
       // Fetch prices and metrics for each token
       const marketsData = await Promise.all(
         validTokens.map(async (token) => {
           try {
-            // Fetch price from oracle
+            // Try to get price from price feed first (more up-to-date)
             let price = 0;
-            try {
-              const priceData: PriceResponse = await contractAPI.getPrice(token.id);
-              console.log(`Price data for ${token.id}:`, priceData);
-              if (priceData && priceData.price !== null && priceData.price !== undefined) {
-                const rawPrice = Number(priceData.price);
-                // Price is returned in MIST (1e9 MIST = 1 SUI), always convert to SUI
-                // MIST values are typically very large (e.g., 16905572749700243000)
-                if (rawPrice > 0) {
-                  // Convert from MIST to SUI by dividing by 1e9
-                  price = rawPrice / 1000000000; // 1e9
-                  console.log(`Price conversion: ${rawPrice} MIST / 1e9 = ${price} SUI`);
-                  
-                  // If price seems unreasonably high (> 1M SUI), it might be an error
-                  if (price > 1000000) {
-                    console.warn(`Price seems very high: ${price} SUI for token ${token.id}`);
+            let priceChange = 0;
+            
+            const feedPrice = priceMap.get(token.id);
+            if (feedPrice) {
+              price = formatPrice(feedPrice.price);
+              const previousPrice = feedPrice.ohlc?.open ? formatPrice(feedPrice.ohlc.open) : price;
+              priceChange = previousPrice > 0 
+                ? ((price - previousPrice) / previousPrice) * 100 
+                : 0;
+            } else {
+              // Fallback to contract API if price feed doesn't have it
+              try {
+                const priceData: PriceResponse = await contractAPI.getPrice(token.id);
+                console.log(`Price data for ${token.id}:`, priceData);
+                if (priceData && priceData.price !== null && priceData.price !== undefined) {
+                  const rawPrice = Number(priceData.price);
+                  if (rawPrice > 0) {
+                    // If price is very large (> 1e15), it's likely in 18-decimal format, divide by 1e18
+                    // Otherwise, assume it's in 9-decimal format (1e9)
+                    if (rawPrice > 1e15) {
+                      price = rawPrice / 1e18;
+                      console.log(`Price conversion: ${rawPrice} MIST / 1e18 = ${price} SUI`);
+                    } else {
+                      price = rawPrice / 1e9;
+                      console.log(`Price conversion: ${rawPrice} MIST / 1e9 = ${price} SUI`);
+                    }
+                    
+                    if (price > 1000000) {
+                      console.warn(`Price seems very high: ${price} SUI for token ${token.id}`);
+                    }
                   }
                 }
+              } catch (priceError) {
+                console.warn(`Failed to fetch price for token ${token.id}:`, priceError);
               }
-            } catch (priceError) {
-              console.warn(`Failed to fetch price for token ${token.id}:`, priceError);
             }
 
             // Calculate market cap (price * circulating supply)
@@ -325,7 +490,7 @@ export default function MarketsPage() {
             const marketCap = price * circulatingSupply;
 
             // Default values for missing data
-            const change24h = token.priceChange24h || 0;
+            const change24h = priceChange || token.priceChange24h || 0;
             const volume24h = 0; // TODO: Fetch from marketplace when available
 
             const market: TokenMarket = {
@@ -602,13 +767,13 @@ export default function MarketsPage() {
                     </div>
                   </td>
                   <td className="py-4 px-6 text-right font-semibold">
-                    {market.price > 0 
-                      ? market.price > 1000000 
-                        ? `$${(market.price / 1000000).toFixed(2)}M`
-                        : market.price > 1000
-                        ? `$${(market.price / 1000).toFixed(2)}K`
-                        : `$${market.price.toFixed(3)}`
-                      : '-'}
+                    {(() => {
+                      const price = priceData.get(market.id);
+                      const currentPrice = price ? formatPrice(price.price) : market.price;
+                      return currentPrice > 0 
+                        ? `${currentPrice.toFixed(6)} SUI`
+                        : '-';
+                    })()}
                   </td>
                   <td
                     className={`py-4 px-6 text-right font-semibold ${
@@ -693,6 +858,30 @@ export default function MarketsPage() {
                 )}
               </div>
             )}
+
+            {/* Current Price Display */}
+            {(() => {
+              const currentPriceData = priceData.get(selectedToken.id);
+              const currentPrice = currentPriceData ? formatPrice(currentPriceData.price) : selectedToken.price;
+              const previousPrice = currentPriceData?.ohlc?.open ? formatPrice(currentPriceData.ohlc.open) : currentPrice;
+              const priceChange = previousPrice > 0 
+                ? ((currentPrice - previousPrice) / previousPrice) * 100 
+                : selectedToken.change24h;
+              
+              return (
+                <div className="mb-4 p-3 bg-zinc-800/50 rounded-lg">
+                  <div className="text-xs text-zinc-400 mb-1">Current Market Price</div>
+                  <div className="flex items-center justify-between">
+                    <div className="text-lg font-semibold text-white">
+                      {currentPrice.toFixed(6)} SUI
+                    </div>
+                    <div className={`text-sm font-medium ${priceChange >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      {priceChange >= 0 ? '+' : ''}{priceChange.toFixed(2)}%
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Form */}
             <div className="space-y-4">

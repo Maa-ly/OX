@@ -1,0 +1,24 @@
+/* TradingView Custom CSS Overrides */
+
+/* Dark theme adjustments */
+.tv-lightweight-charts {
+  background-color: #0f0f14 !important;
+}
+
+/* Chart container */
+.tv-lightweight-charts .chart-container {
+  background-color: #0f0f14 !important;
+}
+
+/* Price scale */
+.tv-lightweight-charts .pane-legend {
+  background-color: #0f0f14 !important;
+  color: #ffffff !important;
+}
+
+/* Time scale */
+.tv-lightweight-charts .time-scale {
+  background-color: #0f0f14 !important;
+  border-top: 1px solid #27272a !important;
+}
+

@@ -17,6 +17,7 @@ import contractRoutes from './routes/contract.js';
 import nautilusRoutes from './routes/nautilus.js';
 import postsRoutes from './routes/posts.js';
 import userRoutes from './routes/user.js';
+import priceFeedRoutes, { priceFeedService } from './routes/price-feed.js';
 
 // Import services
 import { OracleScheduler } from './services/scheduler.js';
@@ -35,6 +36,7 @@ const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:3001',
   'https://ox-gold.vercel.app',
+  'https://ox-1bq4.vercel.app', // Current Vercel deployment
   process.env.FRONTEND_URL,
 ].filter(Boolean); // Remove undefined values
 
@@ -73,6 +75,7 @@ app.use('/api/contract', contractRoutes);
 app.use('/api/nautilus', nautilusRoutes);
 app.use('/api/posts', postsRoutes);
 app.use('/api/user', userRoutes);
+app.use('/api/price-feed', priceFeedRoutes);
 
 // Root endpoint
 app.get('/', (req, res) => {
@@ -88,6 +91,7 @@ app.get('/', (req, res) => {
       contract: '/api/contract',
       nautilus: '/api/nautilus',
       posts: '/api/posts',
+      priceFeed: '/api/price-feed',
     },
   });
 });
@@ -182,6 +186,9 @@ process.on('SIGINT', async () => {
     await scheduler.stop();
   }
   
+  // Stop price feed service
+  priceFeedService.stop();
+  
   logger.info('Shutdown complete');
   process.exit(0);
 });
@@ -193,6 +200,9 @@ process.on('SIGTERM', async () => {
   if (scheduler) {
     await scheduler.stop();
   }
+  
+  // Stop price feed service
+  priceFeedService.stop();
   
   logger.info('Shutdown complete');
   process.exit(0);

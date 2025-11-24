@@ -7,12 +7,14 @@ import { useEffect, useState, Suspense } from 'react';
 import Link from 'next/link';
 import { Header } from '@/components/shared/header';
 import { getUserPortfolio, type DashboardPortfolio, type IPToken } from '@/lib/utils/dashboard-api';
+import { getAllCurrentPrices, getPriceFeedSSE, formatPrice, type PriceData } from '@/lib/utils/price-feed';
 
 function DashboardContent() {
   const { address: walletAddress } = useWalletAuth();
   const { address: zkLoginAddress } = useZkLogin();
   const { isAuthenticated, address } = useAuthStore();
   const [portfolio, setPortfolio] = useState<DashboardPortfolio | null>(null);
+  const [priceData, setPriceData] = useState<Map<string, PriceData>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'overview' | 'contributions' | 'portfolio'>('overview');
@@ -33,6 +35,16 @@ function DashboardContent() {
     try {
       const data = await getUserPortfolio(currentAddress);
       setPortfolio(data);
+      
+      // Load initial prices for owned tokens
+      if (data.ipTokensOwned.length > 0) {
+        const prices = await getAllCurrentPrices();
+        const priceMap = new Map<string, PriceData>();
+        prices.forEach(price => {
+          priceMap.set(price.ipTokenId, price);
+        });
+        setPriceData(priceMap);
+      }
     } catch (error: any) {
       console.error('Failed to load portfolio:', error);
       setError(error.message || 'Failed to load portfolio data');
@@ -49,6 +61,26 @@ function DashboardContent() {
       setLoading(false);
     }
   };
+
+  // Subscribe to real-time price updates
+  useEffect(() => {
+    if (!portfolio || portfolio.ipTokensOwned.length === 0) return;
+    
+    const sse = getPriceFeedSSE();
+    const unsubscribe = sse.subscribe((prices) => {
+      setPriceData(prevPriceMap => {
+        const newPriceMap = new Map(prevPriceMap);
+        prices.forEach(price => {
+          newPriceMap.set(price.ipTokenId, price);
+        });
+        return newPriceMap;
+      });
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [portfolio]);
 
   if (!isAuthenticated && !currentAddress) {
     return (
@@ -193,22 +225,31 @@ function DashboardContent() {
             <div className="rounded-xl border border-zinc-800 bg-linear-to-br from-zinc-900/50 to-zinc-900/30 p-6">
               <h2 className="text-xl font-semibold mb-4">Your IP Tokens</h2>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                {portfolio.ipTokensOwned.map((token) => (
-                  <div key={token.id} className="rounded-lg border border-zinc-800 bg-zinc-900/30 p-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <div>
-                        <div className="font-semibold text-white">{token.name}</div>
-                        <div className="text-sm text-zinc-400">{token.symbol}</div>
-                      </div>
-                      <div className="text-right">
-                        <div className="font-semibold text-white">${token.currentPrice.toFixed(2)}</div>
-                        <div className={`text-sm ${token.priceChange24h >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                          {token.priceChange24h >= 0 ? '+' : ''}{token.priceChange24h.toFixed(2)}%
+                {portfolio.ipTokensOwned.map((token) => {
+                  const price = priceData.get(token.id);
+                  const currentPrice = price ? formatPrice(price.price) : (token.currentPrice || 0);
+                  const previousPrice = price?.ohlc?.open ? formatPrice(price.ohlc.open) : currentPrice;
+                  const priceChange = previousPrice > 0 
+                    ? ((currentPrice - previousPrice) / previousPrice) * 100 
+                    : (token.priceChange24h || 0);
+                  
+                  return (
+                    <div key={token.id} className="rounded-lg border border-zinc-800 bg-zinc-900/30 p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <div>
+                          <div className="font-semibold text-white">{token.name}</div>
+                          <div className="text-sm text-zinc-400">{token.symbol}</div>
+                        </div>
+                        <div className="text-right">
+                          <div className="font-semibold text-white">{currentPrice.toFixed(6)} SUI</div>
+                          <div className={`text-sm ${priceChange >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                            {priceChange >= 0 ? '+' : ''}{priceChange.toFixed(2)}%
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           </div>
@@ -253,20 +294,28 @@ function DashboardContent() {
           <div className="rounded-xl border border-zinc-800 bg-linear-to-br from-zinc-900/50 to-zinc-900/30 p-6">
             <h2 className="text-xl font-semibold mb-4">IP Token Portfolio</h2>
             <div className="space-y-4">
-              {portfolio.ipTokensOwned.map((token) => (
-                <div key={token.id} className="rounded-lg border border-zinc-800 bg-zinc-900/30 p-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <div>
-                      <div className="text-2xl font-bold text-white">{token.name}</div>
-                      <div className="text-sm text-zinc-400">{token.symbol} • {token.category}</div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-2xl font-bold text-white">${token.currentPrice.toFixed(2)}</div>
-                      <div className={`text-sm ${token.priceChange24h >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                        {token.priceChange24h >= 0 ? '+' : ''}{token.priceChange24h.toFixed(2)}% (24h)
+              {portfolio.ipTokensOwned.map((token) => {
+                const price = priceData.get(token.id);
+                const currentPrice = price ? formatPrice(price.price) : (token.currentPrice || 0);
+                const previousPrice = price?.ohlc?.open ? formatPrice(price.ohlc.open) : currentPrice;
+                const priceChange = previousPrice > 0 
+                  ? ((currentPrice - previousPrice) / previousPrice) * 100 
+                  : (token.priceChange24h || 0);
+                
+                return (
+                  <div key={token.id} className="rounded-lg border border-zinc-800 bg-zinc-900/30 p-6">
+                    <div className="flex items-center justify-between mb-4">
+                      <div>
+                        <div className="text-2xl font-bold text-white">{token.name}</div>
+                        <div className="text-sm text-zinc-400">{token.symbol} • {token.category}</div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-2xl font-bold text-white">{currentPrice.toFixed(6)} SUI</div>
+                        <div className={`text-sm ${priceChange >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                          {priceChange >= 0 ? '+' : ''}{priceChange.toFixed(2)}% (24h)
+                        </div>
                       </div>
                     </div>
-                  </div>
                   <div className="grid grid-cols-2 gap-4 pt-4 border-t border-zinc-800">
                     <div>
                       <div className="text-sm text-zinc-400 mb-1">Average Rating</div>
@@ -278,7 +327,8 @@ function DashboardContent() {
                     </div>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
