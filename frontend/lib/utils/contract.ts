@@ -135,11 +135,11 @@ export async function createBuyOrder(
   }
 
   // Step 1: Create the buy order
-  // Marketplace is a shared object, so use sharedObject() instead of object()
+  // Marketplace is a shared object, using tx.object() which works for shared objects
   const createOrderResult = tx.moveCall({
     target: `${PACKAGE_ID}::marketplace::create_buy_order`,
     arguments: [
-      tx.sharedObject(MARKETPLACE_OBJECT_ID), // Shared object requires sharedObject()
+      tx.object(MARKETPLACE_OBJECT_ID), // Shared object - tx.object() works for shared objects
       tx.pure.id(params.ipTokenId),
       tx.pure.u64(BigInt(params.price)),
       tx.pure.u64(BigInt(params.quantity)),
@@ -222,7 +222,7 @@ export async function createSellOrder(
   tx.moveCall({
     target: `${PACKAGE_ID}::marketplace::create_sell_order`,
     arguments: [
-      tx.sharedObject(MARKETPLACE_OBJECT_ID), // Marketplace is a shared object
+      tx.object(MARKETPLACE_OBJECT_ID), // Marketplace is a shared object - tx.object() works
       tx.pure.id(params.ipTokenId),
       tx.pure.u64(BigInt(params.price)),
       tx.pure.u64(BigInt(params.quantity)),
@@ -280,7 +280,7 @@ export async function executeBuyOrder(
   tx.moveCall({
     target: `${PACKAGE_ID}::marketplace::execute_buy_order`,
     arguments: [
-      tx.sharedObject(MARKETPLACE_OBJECT_ID), // Marketplace is a shared object
+      tx.object(MARKETPLACE_OBJECT_ID), // Marketplace is a shared object - tx.object() works
       tx.object(orderId),
     ],
   });
@@ -318,7 +318,7 @@ export async function executeSellOrder(
   tx.moveCall({
     target: `${PACKAGE_ID}::marketplace::execute_sell_order`,
     arguments: [
-      tx.sharedObject(MARKETPLACE_OBJECT_ID), // Marketplace is a shared object
+      tx.object(MARKETPLACE_OBJECT_ID), // Marketplace is a shared object - tx.object() works
       tx.object(orderId),
     ],
   });
@@ -356,7 +356,7 @@ export async function cancelOrder(
   tx.moveCall({
     target: `${PACKAGE_ID}::marketplace::cancel_order`,
     arguments: [
-      tx.sharedObject(MARKETPLACE_OBJECT_ID), // Marketplace is a shared object
+      tx.object(MARKETPLACE_OBJECT_ID), // Marketplace is a shared object - tx.object() works
       tx.object(orderId),
     ],
   });
@@ -397,7 +397,7 @@ export async function initializeTokenPrice(
   tx.moveCall({
     target: `${PACKAGE_ID}::oracle::initialize_token_price`,
     arguments: [
-      tx.object(ORACLE_OBJECT_ID),
+      tx.object(ORACLE_OBJECT_ID), // Oracle is a shared object - tx.object() works
       tx.pure.id(params.ipTokenId),
       tx.pure.u64(BigInt(params.basePrice)),
     ],
@@ -443,7 +443,7 @@ export async function updateEngagementMetrics(
   tx.moveCall({
     target: `${PACKAGE_ID}::oracle::update_engagement_metrics`,
     arguments: [
-      tx.object(ORACLE_OBJECT_ID),
+      tx.object(ORACLE_OBJECT_ID), // Oracle is a shared object - tx.object() works
       tx.object(ORACLE_ADMIN_CAP_ID),
       tx.pure.id(params.ipTokenId),
       tx.pure.u64(BigInt(params.averageRating)),
@@ -488,7 +488,7 @@ export async function recalculatePrice(
   tx.moveCall({
     target: `${PACKAGE_ID}::oracle::recalculate_price`,
     arguments: [
-      tx.object(ORACLE_OBJECT_ID),
+      tx.object(ORACLE_OBJECT_ID), // Oracle is a shared object - tx.object() works
       tx.pure.id(ipTokenId),
     ],
   });
