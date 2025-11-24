@@ -478,7 +478,7 @@ export class WalrusService {
           const epochs = options.epochs || 365;
           const isPermanent = options.permanent || !options.deletable;
           
-          // Build query parameters
+          // Build query parameters - match frontend format
           const queryParams = new URLSearchParams();
           queryParams.append('epochs', epochs.toString());
           if (isPermanent) {
@@ -487,8 +487,15 @@ export class WalrusService {
             queryParams.append('deletable', 'true');
           }
           
-          // HTTP API: PUT $PUBLISHER/v1/blobs?epochs=N&permanent=true
+          // If userAddress is provided, include send_object_to (same as frontend uploads)
+          // This is optional - backend wallet can be used if not provided
+          if (options.userAddress) {
+            queryParams.append('send_object_to', options.userAddress);
+          }
+          
+          // HTTP API: PUT $PUBLISHER/v1/blobs?epochs=N&permanent=true[&send_object_to=address]
           // The body should be the raw binary data
+          // MUST use same publisher URL as frontend uploads: https://publisher.walrus-01.tududes.com
           const url = `${this.publisherUrl.replace(/\/$/, '')}/v1/blobs?${queryParams.toString()}`;
           logger.info(`Storing blob via HTTP API: ${url} (${buffer.length} bytes, permanent: ${isPermanent}, epochs: ${epochs})`);
           
@@ -507,6 +514,14 @@ export class WalrusService {
           } catch (fetchError) {
             logger.error('Fetch error:', fetchError.message);
             logger.error('Fetch error stack:', fetchError.stack);
+            logger.error(`Failed to connect to Walrus publisher. URL: ${url}`);
+            
+            // Provide helpful error message
+            if (fetchError.message.includes('ECONNREFUSED') || fetchError.message.includes('Failed to fetch')) {
+              throw new Error(`Failed to connect to Walrus publisher at ${this.publisherUrl}. ` +
+                `Please check if the local publisher is running (for localhost) or if the URL is correct. ` +
+                `Original error: ${fetchError.message}`);
+            }
             throw new Error(`Failed to connect to Walrus publisher: ${fetchError.message}. URL: ${url}`);
           }
           
@@ -585,7 +600,7 @@ export class WalrusService {
           logger.error('HTTP API failed:', httpError.message);
           logger.error('HTTP API error stack:', httpError.stack);
           
-          // Check if it's a balance error or API parameter error - these might work with CLI
+          // Check if it's a balance error or API parameter error
           const isBalanceError = httpError.message.includes('WAL coins') || 
                                  httpError.message.includes('sufficient balance') ||
                                  httpError.message.includes('Insufficient WAL balance');
@@ -593,43 +608,27 @@ export class WalrusService {
                                    httpError.message.includes('deserialize') ||
                                    httpError.message.includes('400 Bad Request');
           
-          // In serverless environments, only fall back for specific errors that CLI might handle
-          if (isServerless && !isBalanceError && !isParameterError) {
-            // If it's already a formatted error, just re-throw it
-            if (httpError.message.includes('Insufficient WAL balance') || 
-                httpError.message.includes('Walrus HTTP API error')) {
-              throw httpError;
-            }
-            throw new Error(`Walrus HTTP API failed in serverless environment: ${httpError.message}. Publisher URL: ${this.publisherUrl}.`);
+          // Always throw HTTP API errors - don't fall back to CLI for like/comment operations
+          // CLI is unreliable and causes "executable not found" errors
+          // HTTP API must work for the backend to function properly
+          let errorMsg;
+          if (isBalanceError) {
+            errorMsg = `HTTP API failed: Insufficient WAL balance. ` +
+              `Publisher URL: ${this.publisherUrl}. ` +
+              `Wallet: ${this.walletAddress || 'Not configured'}. ` +
+              `Error: ${httpError.message}. ` +
+              `Please fund the wallet with WAL tokens using 'walrus get-wal' command.`;
+          } else if (isParameterError) {
+            errorMsg = `HTTP API failed: Invalid request parameters. ` +
+              `Publisher URL: ${this.publisherUrl}. ` +
+              `Error: ${httpError.message}`;
+          } else {
+            errorMsg = `HTTP API failed: ${httpError.message}. ` +
+              `Publisher URL: ${this.publisherUrl}. ` +
+              `Please check your Walrus configuration and network connectivity.`;
           }
           
-          // For non-serverless environments, try CLI fallback (CLI won't work in production/serverless)
-          if (!isServerless) {
-            if (isBalanceError) {
-              logger.warn('HTTP API failed due to balance issue. CLI uses wallet from config file, which may work. Falling back to CLI:', httpError.message);
-            } else if (isParameterError) {
-              logger.warn('HTTP API failed due to parameter issue. Falling back to CLI which uses config file:', httpError.message);
-            } else {
-              logger.warn('HTTP API failed, falling back to CLI:', httpError.message);
-            }
-            // Fall through to CLI method for local development
-          } else {
-            // In serverless/production, CLI won't work - provide helpful error
-            const publisherUrl = this.publisherUrl;
-            
-            let errorMsg;
-            if (isBalanceError) {
-              errorMsg = `HTTP API failed: The Walrus publisher may not have sufficient WAL tokens. ` +
-                `Publisher URL: ${publisherUrl}. ` +
-                `Error: ${httpError.message}`;
-            } else {
-              errorMsg = `HTTP API failed and CLI fallback is not available in serverless environments. ` +
-                `Publisher URL: ${publisherUrl}. ` +
-                `Error: ${httpError.message}`;
-            }
-            throw new Error(errorMsg);
-          }
-          // Fall through to CLI method (only for non-serverless)
+          throw new Error(errorMsg);
         }
       } else {
         // HTTP API not configured
@@ -914,6 +913,21 @@ export class WalrusService {
     try {
       const data = await this.readBlob(blobId);
       const json = data.toString('utf-8');
+      
+      // Check if it's binary data before trying to parse
+      const isBinary = json.includes('\x00') || 
+                       json.startsWith('RIFF') ||
+                       json.startsWith('\x89PNG') ||
+                       json.startsWith('GIF') ||
+                       json.startsWith('ÿØÿà') ||
+                       json.startsWith('\xFF\xD8\xFF') ||
+                       json.startsWith('JFIF') ||
+                       (json.length > 100 && json.match(/[^\x20-\x7E\n\r\t]/));
+      
+      if (isBinary) {
+        throw new Error(`Blob ${blobId} is binary data, not JSON`);
+      }
+      
       return JSON.parse(json);
     } catch (error) {
       logger.error(`Error reading contribution ${blobId}:`, error);

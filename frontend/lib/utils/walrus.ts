@@ -317,9 +317,19 @@ export async function storeBlob(
 /**
  * Post interface for Discover page
  */
+export interface Comment {
+  id: string;
+  author: string;
+  authorAddress: string;
+  content: string;
+  timestamp: number;
+}
+
 export interface Post {
   id: string;
-  blobId: string;
+  blobId: string; // This should be the metadata blobId (for likes/comments), not the original/blobId
+  metadataBlobId?: string; // Explicit metadata blobId for likes/comments
+  originalBlobId?: string; // Original blobId from contract (could be binary media)
   author: string;
   authorAddress: string;
   content: string;
@@ -329,6 +339,8 @@ export interface Post {
   ipTokenIds: string[]; // Array of IP token IDs this post is about
   likes: number;
   comments: number;
+  likesList?: string[]; // Array of user addresses who liked this post
+  commentsList?: Comment[]; // Array of comments on this post
   timestamp: number | string; // Can be number (Unix timestamp) or string (formatted)
   tags: string[];
 }
@@ -711,12 +723,34 @@ export async function readBlobFromWalrus(blobIdOrObjectId: string, isObjectId: b
       throw new Error(`Failed to read blob: ${response.statusText}`);
     }
 
-    const blobData = await response.text();
+    const contentType = response.headers.get('content-type') || '';
+    const blobData = await response.arrayBuffer();
+    
+    // Check if it's binary content (image, video, etc.)
+    const isBinary = !contentType.includes('application/json') && 
+                     (contentType.startsWith('image/') || 
+                      contentType.startsWith('video/') || 
+                      contentType.startsWith('audio/') ||
+                      contentType === 'application/octet-stream');
+    
+    if (isBinary) {
+      // Return binary indicator - don't try to parse as JSON
+      return { _isBinary: true, blobId: blobIdOrObjectId, contentType };
+    }
+    
+    // Try to parse as text/JSON
     try {
-      return JSON.parse(blobData);
-    } catch {
-      // If not JSON, return as text
-      return { content: blobData };
+      const text = new TextDecoder('utf-8', { fatal: true }).decode(blobData);
+      // Check if text contains null bytes or looks like binary
+      if (text.includes('\x00') || (text.length > 100 && text.match(/[^\x20-\x7E\n\r\t]/))) {
+        // Likely binary data being read as text
+        return { _isBinary: true, blobId: blobIdOrObjectId };
+      }
+      // Try to parse as JSON
+      return JSON.parse(text);
+    } catch (parseError) {
+      // If not valid UTF-8 or not JSON, it's likely binary
+      return { _isBinary: true, blobId: blobIdOrObjectId };
     }
   } catch (error) {
     console.debug(`[readBlobFromWalrus] Failed to read blob ${blobIdOrObjectId} (isObjectId: ${isObjectId}):`, error);

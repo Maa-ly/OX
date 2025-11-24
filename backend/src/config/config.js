@@ -19,10 +19,11 @@ export const config = {
   walrus: {
     configPath: '~/.config/walrus/client_config.yaml',
     context: 'testnet',
-    // HTTP API URLs
+    // HTTP API URLs - MUST match frontend configuration
     // Reference: https://docs.wal.app/usage/web-api.html
+    // Frontend uses: https://publisher.walrus-01.tududes.com (same as uploads)
     aggregatorUrl: process.env.WALRUS_AGGREGATOR_URL || 'https://aggregator.walrus-testnet.walrus.space',
-    publisherUrl: process.env.WALRUS_PUBLISHER_URL || 'https://publisher.walrus-testnet.walrus.space',
+    publisherUrl: process.env.WALRUS_PUBLISHER_URL || 'https://publisher.walrus-01.tududes.com',
     // Use HTTP API by default
     useHttpApi: true,
   },
