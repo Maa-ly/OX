@@ -134,17 +134,24 @@ export async function createBuyOrder(
     tx.setSender(wallet.account.address);
   }
 
-  // Call the smart contract function
-  tx.moveCall({
+  // Step 1: Create the buy order
+  // Marketplace is a shared object, so use sharedObject() instead of object()
+  const createOrderResult = tx.moveCall({
     target: `${PACKAGE_ID}::marketplace::create_buy_order`,
     arguments: [
-      tx.object(MARKETPLACE_OBJECT_ID),
+      tx.sharedObject(MARKETPLACE_OBJECT_ID), // Shared object requires sharedObject()
       tx.pure.id(params.ipTokenId),
       tx.pure.u64(BigInt(params.price)),
       tx.pure.u64(BigInt(params.quantity)),
-      tx.object(params.paymentCoinId),
+      tx.object(params.paymentCoinId), // Payment coin is an owned object
     ],
   });
+
+  // Step 2: Try to execute the order immediately to match with existing sell orders
+  // This attempts to fill the order right away if there are matching sell orders
+  // Note: execute_buy_order requires oracle, but it's a placeholder that doesn't actually match
+  // For now, we just create the order - matching would require finding sell orders first
+  // The order will be available for matching by other users or can be executed later
 
   console.log('[createBuyOrder] Transaction prepared, requesting wallet signature...');
 
@@ -215,7 +222,7 @@ export async function createSellOrder(
   tx.moveCall({
     target: `${PACKAGE_ID}::marketplace::create_sell_order`,
     arguments: [
-      tx.object(MARKETPLACE_OBJECT_ID),
+      tx.sharedObject(MARKETPLACE_OBJECT_ID), // Marketplace is a shared object
       tx.pure.id(params.ipTokenId),
       tx.pure.u64(BigInt(params.price)),
       tx.pure.u64(BigInt(params.quantity)),
@@ -273,7 +280,7 @@ export async function executeBuyOrder(
   tx.moveCall({
     target: `${PACKAGE_ID}::marketplace::execute_buy_order`,
     arguments: [
-      tx.object(MARKETPLACE_OBJECT_ID),
+      tx.sharedObject(MARKETPLACE_OBJECT_ID), // Marketplace is a shared object
       tx.object(orderId),
     ],
   });
@@ -311,7 +318,7 @@ export async function executeSellOrder(
   tx.moveCall({
     target: `${PACKAGE_ID}::marketplace::execute_sell_order`,
     arguments: [
-      tx.object(MARKETPLACE_OBJECT_ID),
+      tx.sharedObject(MARKETPLACE_OBJECT_ID), // Marketplace is a shared object
       tx.object(orderId),
     ],
   });
@@ -349,7 +356,7 @@ export async function cancelOrder(
   tx.moveCall({
     target: `${PACKAGE_ID}::marketplace::cancel_order`,
     arguments: [
-      tx.object(MARKETPLACE_OBJECT_ID),
+      tx.sharedObject(MARKETPLACE_OBJECT_ID), // Marketplace is a shared object
       tx.object(orderId),
     ],
   });

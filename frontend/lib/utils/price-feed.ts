@@ -297,8 +297,15 @@ export function getPriceFeedSSE(): PriceFeedSSE {
 
 /**
  * Format price from MIST to SUI
+ * Prices are stored with 18 decimals (like SUI tokens), so we divide by 1e18
+ * to normalize to SUI units
  */
 export function formatPrice(priceInMist: number): number {
+  // If price is very large (> 1e15), it's likely in 18-decimal format, divide by 1e18
+  // Otherwise, assume it's already in 9-decimal format (1e9)
+  if (priceInMist > 1e15) {
+    return priceInMist / 1e18;
+  }
   return priceInMist / 1e9;
 }
 

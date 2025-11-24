@@ -150,7 +150,7 @@ export async function getTokenPrice(ipTokenId: string): Promise<number | null> {
   tx.moveCall({
     target: `${PACKAGE_ID}::oracle::get_price`,
     arguments: [
-      tx.object(ORACLE_OBJECT_ID),
+      tx.sharedObject(ORACLE_OBJECT_ID), // Oracle is a shared object
       tx.pure.id(ipTokenId),
     ],
   });
@@ -190,7 +190,7 @@ export async function getEngagementMetrics(ipTokenId: string): Promise<any | nul
   tx.moveCall({
     target: `${PACKAGE_ID}::oracle::get_engagement_metrics`,
     arguments: [
-      tx.object(ORACLE_OBJECT_ID),
+      tx.sharedObject(ORACLE_OBJECT_ID), // Oracle is a shared object
       tx.pure.id(ipTokenId),
     ],
   });

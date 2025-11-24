@@ -153,29 +153,101 @@ export default function MarketsPage() {
     }
   };
 
-  const openBuyModal = (token: TokenMarket) => {
+  const openBuyModal = async (token: TokenMarket) => {
     setSelectedToken(token);
     setModalType("buy");
     setQuantity("");
-    // Use current price from price feed if available, otherwise use token price
-    const currentPrice = priceData.get(token.id);
-    const priceInMist = currentPrice 
-      ? currentPrice.price.toString() 
-      : (token.price > 0 ? (token.price * 1e9).toString() : "");
+    
+    // Get actual price from contract (oracle)
+    let priceInMist = "";
+    try {
+      const { getTokenPrice } = await import('@/lib/utils/contract-read');
+      const contractPrice = await getTokenPrice(token.id);
+      
+      if (contractPrice && contractPrice > 0) {
+        // Contract price is in MIST (9-decimal format, scaled by 1e9)
+        priceInMist = Math.floor(contractPrice).toString();
+        console.log(`[openBuyModal] Got price from contract: ${contractPrice} MIST (${contractPrice / 1e9} SUI) for token ${token.id}`);
+      } else {
+        // Fallback to price feed or token price
+        const currentPrice = priceData.get(token.id);
+        if (currentPrice) {
+          const rawPrice = currentPrice.price;
+          if (rawPrice > 1e15) {
+            priceInMist = Math.floor(rawPrice / 1e9).toString();
+          } else {
+            priceInMist = Math.floor(rawPrice).toString();
+          }
+        } else if (token.price > 0) {
+          priceInMist = Math.floor(token.price * 1e9).toString();
+        }
+      }
+    } catch (error) {
+      console.warn(`[openBuyModal] Failed to get price from contract, using fallback:`, error);
+      // Fallback to price feed or token price
+      const currentPrice = priceData.get(token.id);
+      if (currentPrice) {
+        const rawPrice = currentPrice.price;
+        if (rawPrice > 1e15) {
+          priceInMist = Math.floor(rawPrice / 1e9).toString();
+        } else {
+          priceInMist = Math.floor(rawPrice).toString();
+        }
+      } else if (token.price > 0) {
+        priceInMist = Math.floor(token.price * 1e9).toString();
+      }
+    }
+    
     setPrice(priceInMist);
     setModalError(null);
     setModalSuccess(null);
   };
 
-  const openSellModal = (token: TokenMarket) => {
+  const openSellModal = async (token: TokenMarket) => {
     setSelectedToken(token);
     setModalType("sell");
     setQuantity("");
-    // Use current price from price feed if available, otherwise use token price
-    const currentPrice = priceData.get(token.id);
-    const priceInMist = currentPrice 
-      ? currentPrice.price.toString() 
-      : (token.price > 0 ? (token.price * 1e9).toString() : "");
+    
+    // Get actual price from contract (oracle)
+    let priceInMist = "";
+    try {
+      const { getTokenPrice } = await import('@/lib/utils/contract-read');
+      const contractPrice = await getTokenPrice(token.id);
+      
+      if (contractPrice && contractPrice > 0) {
+        // Contract price is in MIST (9-decimal format, scaled by 1e9)
+        priceInMist = Math.floor(contractPrice).toString();
+        console.log(`[openSellModal] Got price from contract: ${contractPrice} MIST (${contractPrice / 1e9} SUI) for token ${token.id}`);
+      } else {
+        // Fallback to price feed or token price
+        const currentPrice = priceData.get(token.id);
+        if (currentPrice) {
+          const rawPrice = currentPrice.price;
+          if (rawPrice > 1e15) {
+            priceInMist = Math.floor(rawPrice / 1e9).toString();
+          } else {
+            priceInMist = Math.floor(rawPrice).toString();
+          }
+        } else if (token.price > 0) {
+          priceInMist = Math.floor(token.price * 1e9).toString();
+        }
+      }
+    } catch (error) {
+      console.warn(`[openSellModal] Failed to get price from contract, using fallback:`, error);
+      // Fallback to price feed or token price
+      const currentPrice = priceData.get(token.id);
+      if (currentPrice) {
+        const rawPrice = currentPrice.price;
+        if (rawPrice > 1e15) {
+          priceInMist = Math.floor(rawPrice / 1e9).toString();
+        } else {
+          priceInMist = Math.floor(rawPrice).toString();
+        }
+      } else if (token.price > 0) {
+        priceInMist = Math.floor(token.price * 1e9).toString();
+      }
+    }
+    
     setPrice(priceInMist);
     setModalError(null);
     setModalSuccess(null);
@@ -223,6 +295,7 @@ export default function MarketsPage() {
       }
 
       // Calculate total cost (price * quantity + fee)
+      // priceNum is already in MIST, quantityNum is a number
       // Fee is 1% (100 bps) of total cost
       const totalCost = BigInt(Math.floor(priceNum * quantityNum));
       const fee = totalCost * BigInt(100) / BigInt(10000); // 1% fee
@@ -243,11 +316,27 @@ export default function MarketsPage() {
       }
 
       // Create buy order
+      // Ensure price and quantity are valid integers
+      const priceInMist = Math.floor(priceNum);
+      const quantityInt = Math.floor(quantityNum);
+      
+      if (priceInMist <= 0 || quantityInt <= 0) {
+        throw new Error("Price and quantity must be positive integers");
+      }
+
+      console.log('[handleBuy] Creating buy order:', {
+        ipTokenId: selectedToken.id,
+        price: priceInMist,
+        quantity: quantityInt,
+        priceInSUI: (priceInMist / 1e9).toFixed(6),
+        totalCostInSUI: ((priceInMist * quantityInt) / 1e9).toFixed(6),
+      });
+
       const result = await createBuyOrder(
         {
           ipTokenId: selectedToken.id,
-          price: Math.floor(priceNum),
-          quantity: Math.floor(quantityNum),
+          price: priceInMist,
+          quantity: quantityInt,
           paymentCoinId: paymentCoin.coinObjectId,
         },
         wallet
@@ -376,8 +465,15 @@ export default function MarketsPage() {
                 if (priceData && priceData.price !== null && priceData.price !== undefined) {
                   const rawPrice = Number(priceData.price);
                   if (rawPrice > 0) {
-                    price = rawPrice / 1000000000; // 1e9
-                    console.log(`Price conversion: ${rawPrice} MIST / 1e9 = ${price} SUI`);
+                    // If price is very large (> 1e15), it's likely in 18-decimal format, divide by 1e18
+                    // Otherwise, assume it's in 9-decimal format (1e9)
+                    if (rawPrice > 1e15) {
+                      price = rawPrice / 1e18;
+                      console.log(`Price conversion: ${rawPrice} MIST / 1e18 = ${price} SUI`);
+                    } else {
+                      price = rawPrice / 1e9;
+                      console.log(`Price conversion: ${rawPrice} MIST / 1e9 = ${price} SUI`);
+                    }
                     
                     if (price > 1000000) {
                       console.warn(`Price seems very high: ${price} SUI for token ${token.id}`);

@@ -6,7 +6,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { MobileBottomNav, MobileSidebar } from "@/components/mobile-nav";
 import { getIPTokens, type IPToken } from "@/lib/utils/api";
-import { storePost, getPosts, getPostsByAddress, likePost, commentOnPost, type Post } from "@/lib/utils/walrus";
+import { storePost, getPosts, getPostsByAddress, likePost, commentOnPost, type Post, type Comment } from "@/lib/utils/walrus";
 import { useWalletAuth } from "@/lib/hooks/useWalletAuth";
 import { useZkLogin } from "@/lib/hooks/useZkLogin";
 import { useAuthStore } from "@/lib/stores/auth-store";
@@ -143,12 +143,19 @@ function DiscoverPageContent() {
             console.log(`[loadPosts] Contract blob ${contractBlob.blobId} has text, treating as media post with caption`);
           } else {
             // No text from contract → might be text-only post, try to fetch
-            try {
-              const { readBlobFromWalrus } = await import('@/lib/utils/walrus');
-              const blobData = await readBlobFromWalrus(contractBlob.blobId, false);
-              
-              // Check if it's JSON post data (legacy format)
-              if (typeof blobData === 'object' && blobData !== null && blobData.content) {
+              try {
+                const { readBlobFromWalrus } = await import('@/lib/utils/walrus');
+                const blobData = await readBlobFromWalrus(contractBlob.blobId, false);
+                
+                // Skip if it's binary data
+                if (blobData && blobData._isBinary) {
+                  // This is binary media - treat as media post
+                  isMediaPost = true;
+                  postData.mediaUrl = blobUrl;
+                  postData.mediaType = 'image';
+                  postData.content = '';
+                  console.log(`[loadPosts] Blob ${contractBlob.blobId} is binary media`);
+                } else if (typeof blobData === 'object' && blobData !== null && blobData.content) {
                 // Check if content is binary/image data BEFORE trying to parse
                 const contentStr = typeof blobData.content === 'string' ? blobData.content : String(blobData.content);
                 const isBinaryImage = contentStr.startsWith('RIFF') || 
@@ -192,9 +199,10 @@ function DiscoverPageContent() {
                   postData.mediaType = postData.mediaType || 'image';
                   isMediaPost = true;
                 }
-              } else {
-                // Plain text - check if it's binary first
-                const dataStr = String(blobData);
+              } else if (!blobData._isBinary) {
+                // Not binary - treat as text content
+                const dataStr = typeof blobData === 'string' ? blobData : String(blobData);
+                // Additional safety check for binary
                 const isBinaryImage = dataStr.startsWith('RIFF') || 
                                       dataStr.startsWith('\x89PNG') || 
                                       dataStr.startsWith('GIF') || 
@@ -208,10 +216,16 @@ function DiscoverPageContent() {
                   isMediaPost = true;
                   postData.mediaUrl = blobUrl;
                   postData.mediaType = 'image';
-                  postData.content = ''; // Don't set binary data as content
+                  postData.content = '';
                 } else {
                   postData.content = dataStr;
                 }
+              } else {
+                // Already detected as binary
+                isMediaPost = true;
+                postData.mediaUrl = blobUrl;
+                postData.mediaType = 'image';
+                postData.content = '';
               }
             } catch (fetchError) {
               // If we can't fetch, assume it's media (browser will handle it)
@@ -240,7 +254,8 @@ function DiscoverPageContent() {
           
           const post: Post = {
             id: contractBlob.blobId,
-            blobId: contractBlob.blobId,
+            blobId: contractBlob.blobId, // This is the original/blobId (could be binary media)
+            originalBlobId: contractBlob.blobId, // Store original for reference
             author: postData.author || 'Unknown',
             authorAddress: postData.authorAddress || '0x0000000000000000000000000000000000000000',
             content: finalContent,
@@ -251,6 +266,8 @@ function DiscoverPageContent() {
             ipTokenIds: postData.ipTokenIds || [],
             likes: postData.likes || 0,
             comments: postData.comments || 0,
+            likesList: postData.likesList || [],
+            commentsList: postData.commentsList || [],
             tags: postData.tags || [],
           };
           
@@ -273,25 +290,104 @@ function DiscoverPageContent() {
       
       // Fetch post metadata (likes/comments) for each post from Walrus
       // This ensures we have the latest engagement data
+      // First, check if we have any posts with updated blobIds in local state (from likes/comments)
+      const existingPostsMap = new Map(posts.map(p => [p.blobId, p]));
+      const originalBlobIdToPost = new Map<string, Post>();
+      posts.forEach(p => {
+        // Track original blobId (the one from contract) to latest blobId mapping
+        // For now, we'll use the blobId from contract, but if we have a newer one, use it
+        const originalBlobId = p.id || p.blobId;
+        if (!originalBlobIdToPost.has(originalBlobId)) {
+          originalBlobIdToPost.set(originalBlobId, p);
+        }
+      });
+      
+      // Query backend API to get posts with metadata blobIds
+      // This ensures we have the correct metadata blobIds for likes/comments
+      const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001';
+      let backendPosts: any[] = [];
+      try {
+        const backendResponse = await fetch(`${API_BASE}/api/posts?limit=1000`);
+        if (backendResponse.ok) {
+          const backendData = await backendResponse.json();
+          backendPosts = backendData.posts || [];
+          console.log(`[loadPosts] Fetched ${backendPosts.length} posts from backend API`);
+        }
+      } catch (error) {
+        console.warn('[loadPosts] Failed to fetch posts from backend API:', error);
+      }
+
+      // Create a map of originalBlobId -> metadata blob from backend
+      const originalToMetadataMap = new Map<string, any>();
+      for (const backendPost of backendPosts) {
+        if (backendPost.originalBlobId) {
+          originalToMetadataMap.set(backendPost.originalBlobId, backendPost);
+        }
+        // Also map by the blobId itself in case it's already the metadata blob
+        if (backendPost.blobId || backendPost.id) {
+          originalToMetadataMap.set(backendPost.blobId || backendPost.id, backendPost);
+        }
+      }
+
       const postsWithMetadata = await Promise.all(
         postsFromStorage.map(async (post) => {
           try {
-            // Try to fetch the full post data from Walrus to get likes/comments
-            const { readBlobFromWalrus } = await import('@/lib/utils/walrus');
-            const blobData = await readBlobFromWalrus(post.blobId, false);
+            // Try to find the metadata blob from backend posts
+            const metadataPost = originalToMetadataMap.get(post.blobId) || 
+                                 originalToMetadataMap.get(post.id);
             
-            if (typeof blobData === 'object' && blobData !== null) {
-              // Update likes/comments from Walrus data if available
-              if (typeof blobData.likes === 'number') {
-                post.likes = blobData.likes;
+            if (metadataPost) {
+              // Found metadata blob - use it for likes/comments
+              post.metadataBlobId = metadataPost.blobId || metadataPost.id || metadataPost.walrus_blob_id;
+              post.originalBlobId = post.blobId; // Store original blobId
+              // Update blobId to metadata blobId for likes/comments operations
+              if (post.metadataBlobId) {
+                post.blobId = post.metadataBlobId;
+                post.id = post.metadataBlobId;
               }
-              if (typeof blobData.comments === 'number') {
-                post.comments = blobData.comments;
+              // Update likes/comments from metadata
+              if (typeof metadataPost.likes === 'number') {
+                post.likes = metadataPost.likes;
+              }
+              if (typeof metadataPost.comments === 'number') {
+                post.comments = metadataPost.comments;
+              }
+              if (Array.isArray(metadataPost.likesList)) {
+                post.likesList = metadataPost.likesList;
+              }
+              if (Array.isArray(metadataPost.commentsList)) {
+                post.commentsList = metadataPost.commentsList;
+              }
+              console.log(`[loadPosts] Found metadata blob ${post.metadataBlobId} for original blob ${post.originalBlobId}`);
+            } else {
+              // Try to find metadata blob by searching Walrus
+              // Look for posts that have originalBlobId matching this post's blobId
+              const { readBlobFromWalrus } = await import('@/lib/utils/walrus');
+              
+              // Check if the current blobId is already metadata (has post_type)
+              try {
+                const blobData = await readBlobFromWalrus(post.blobId, false);
+                if (blobData && typeof blobData === 'object' && !blobData._isBinary) {
+                  if (blobData.post_type === 'discover_post' || blobData.engagement_type === 'post') {
+                    // This is already a metadata blob
+                    post.metadataBlobId = post.blobId;
+                    if (blobData.originalBlobId) {
+                      post.originalBlobId = blobData.originalBlobId;
+                    }
+                    // Update likes/comments
+                    if (typeof blobData.likes === 'number') post.likes = blobData.likes;
+                    if (typeof blobData.comments === 'number') post.comments = blobData.comments;
+                    if (Array.isArray(blobData.likesList)) post.likesList = blobData.likesList;
+                    if (Array.isArray(blobData.commentsList)) post.commentsList = blobData.commentsList;
+                  }
+                }
+              } catch (error) {
+                // If we can't read, keep the original blobId
+                console.log(`[loadPosts] Could not read blob ${post.blobId} to check if it's metadata`);
               }
             }
           } catch (error) {
-            // If we can't fetch metadata, keep the default values (0)
-            console.log(`[loadPosts] Could not fetch metadata for post ${post.blobId}, using defaults`);
+            console.log(`[loadPosts] Could not fetch metadata for post ${post.blobId}:`, error);
           }
           return post;
         })
@@ -884,14 +980,22 @@ function DiscoverPageContent() {
 
       // Index the post on backend
       // Backend runs on port 3001 to avoid conflict with Next.js frontend (port 3000)
+      // Backend will store the full post metadata (with likes/comments structure) on Walrus
       const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 
                           process.env.NEXT_PUBLIC_API_URL || 
                           'http://localhost:3001';
-      await fetch(`${API_BASE_URL}/api/posts/index`, {
+      const indexResponse = await fetch(`${API_BASE_URL}/api/posts/index`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ blobId: postBlobId, post: postData }),
       });
+      
+      const indexResult = await indexResponse.json();
+      // The backend returns the metadata blobId which includes likes/comments structure
+      // This blobId should be used for likes/comments operations
+      if (indexResult.blobId && indexResult.blobId !== postBlobId) {
+        console.log(`[finishPostCreation] Post metadata stored with blobId: ${indexResult.blobId} (original: ${postBlobId})`);
+      }
 
       // Reload posts
       await loadPosts();
@@ -929,21 +1033,31 @@ function DiscoverPageContent() {
       return;
     }
 
-    if (likingPosts.has(post.blobId)) return; // Prevent double-clicking
+    // Use metadata blobId for likes/comments, fallback to blobId if not available
+    const blobIdToUse = post.metadataBlobId || post.blobId;
+    
+    if (likingPosts.has(blobIdToUse)) return; // Prevent double-clicking
 
-    setLikingPosts((prev) => new Set(prev).add(post.blobId));
+    setLikingPosts((prev) => new Set(prev).add(blobIdToUse));
 
     try {
-      const result = await likePost(post.blobId, currentAddress);
+      const result = await likePost(blobIdToUse, currentAddress);
       
       // Update post in local state
       // Note: blobId might change if the post was updated on Walrus
       setPosts((prev) =>
         prev.map((p) => {
           if (p.blobId === post.blobId || p.id === post.blobId) {
+            const isLiked = result.liked;
+            const currentLikesList = p.likesList || [];
+            const newLikesList = isLiked
+              ? [...currentLikesList, currentAddress].filter((addr, idx, arr) => arr.indexOf(addr) === idx) // Add and dedupe
+              : currentLikesList.filter((addr) => addr !== currentAddress); // Remove
+            
             return {
               ...p,
               likes: result.likes,
+              likesList: newLikesList,
               // Update blobId if it changed
               blobId: result.blobId || p.blobId,
               id: result.blobId || p.id,
@@ -956,9 +1070,10 @@ function DiscoverPageContent() {
       console.error("Failed to like post:", error);
       setErrorModal({ open: true, message: "Failed to like post. Please try again." });
     } finally {
+      const blobIdForCleanup = post.metadataBlobId || post.blobId;
       setLikingPosts((prev) => {
         const newSet = new Set(prev);
-        newSet.delete(post.blobId);
+        newSet.delete(blobIdForCleanup);
         return newSet;
       });
     }
@@ -975,13 +1090,16 @@ function DiscoverPageContent() {
       return;
     }
 
-    if (commentingPosts.has(post.blobId)) return;
+    // Use metadata blobId for likes/comments, fallback to blobId if not available
+    const blobIdToUse = post.metadataBlobId || post.blobId;
+    
+    if (commentingPosts.has(blobIdToUse)) return;
 
-    setCommentingPosts((prev) => new Set(prev).add(post.blobId));
+    setCommentingPosts((prev) => new Set(prev).add(blobIdToUse));
 
     try {
       const result = await commentOnPost(
-        post.blobId,
+        blobIdToUse,
         currentAddress,
         commentText,
         currentAddress.slice(0, 6) + "..." + currentAddress.slice(-4)
@@ -992,9 +1110,15 @@ function DiscoverPageContent() {
       setPosts((prev) =>
         prev.map((p) => {
           if (p.blobId === post.blobId || p.id === post.blobId) {
+            const currentCommentsList = p.commentsList || [];
+            const newCommentsList = result.comment
+              ? [...currentCommentsList, result.comment]
+              : currentCommentsList;
+            
             return {
               ...p,
               comments: result.comments,
+              commentsList: newCommentsList,
               // Update blobId if it changed
               blobId: result.blobId || p.blobId,
               id: result.blobId || p.id,
@@ -1010,9 +1134,10 @@ function DiscoverPageContent() {
       console.error("Failed to comment on post:", error);
       setErrorModal({ open: true, message: "Failed to comment. Please try again." });
     } finally {
+      const blobIdForCleanup = post.metadataBlobId || post.blobId;
       setCommentingPosts((prev) => {
         const newSet = new Set(prev);
-        newSet.delete(post.blobId);
+        newSet.delete(blobIdForCleanup);
         return newSet;
       });
     }
@@ -1544,11 +1669,15 @@ function DiscoverPageContent() {
                       <button
                         onClick={() => handleLikePost(post)}
                         disabled={likingPosts.has(post.blobId) || !currentAddress}
-                        className="flex items-center gap-1 hover:text-cyan-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        className={`flex items-center gap-1 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                          post.likesList?.includes(currentAddress || '') 
+                            ? 'text-cyan-400 hover:text-cyan-300' 
+                            : 'hover:text-cyan-400'
+                        }`}
                       >
                         <svg
                           className="w-5 h-5"
-                          fill="none"
+                          fill={post.likesList?.includes(currentAddress || '') ? "currentColor" : "none"}
                           viewBox="0 0 24 24"
                           stroke="currentColor"
                         >
@@ -1591,40 +1720,68 @@ function DiscoverPageContent() {
       </div>
 
       {/* Comment Modal */}
-      {showCommentModal && (
-        <div className="fixed inset-0 flex items-center justify-center bg-black/80 backdrop-blur-sm z-50 p-4">
-          <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-6 max-w-md w-full">
-            <h3 className="text-lg font-semibold mb-4">Add a Comment</h3>
-            <textarea
-              value={commentText}
-              onChange={(e) => setCommentText(e.target.value)}
-              placeholder="Write your comment..."
-              className="w-full bg-zinc-950 border border-zinc-700 rounded-lg p-4 min-h-24 focus:outline-none focus:border-cyan-500 resize-none mb-4"
-            />
-            <div className="flex gap-2 justify-end">
-              <button
-                onClick={() => {
-                  setShowCommentModal(null);
-                  setCommentText("");
-                }}
-                className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  const post = posts.find((p) => p.blobId === showCommentModal);
-                  if (post) handleCommentPost(post);
-                }}
-                disabled={!commentText.trim() || commentingPosts.has(showCommentModal || "")}
-                className="px-4 py-2 bg-cyan-500 hover:bg-cyan-600 disabled:bg-zinc-700 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
-              >
-                {commentingPosts.has(showCommentModal || "") ? "Posting..." : "Post Comment"}
-              </button>
+      {showCommentModal && (() => {
+        const post = posts.find((p) => p.blobId === showCommentModal);
+        const comments = post?.commentsList || [];
+        return (
+          <div className="fixed inset-0 flex items-center justify-center bg-black/80 backdrop-blur-sm z-50 p-4">
+            <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-6 max-w-2xl w-full max-h-[90vh] flex flex-col">
+              <h3 className="text-lg font-semibold mb-4">Comments ({comments.length})</h3>
+              
+              {/* Comments List */}
+              <div className="flex-1 overflow-y-auto mb-4 space-y-4 min-h-0">
+                {comments.length === 0 ? (
+                  <p className="text-zinc-500 text-center py-8">No comments yet. Be the first to comment!</p>
+                ) : (
+                  comments.map((comment) => (
+                    <div key={comment.id || comment.timestamp} className="bg-zinc-950 border border-zinc-800 rounded-lg p-4">
+                      <div className="flex items-start justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-cyan-400">{comment.author}</span>
+                          <span className="text-xs text-zinc-500">
+                            {formatTimestamp(comment.timestamp)}
+                          </span>
+                        </div>
+                      </div>
+                      <p className="text-sm text-zinc-300 whitespace-pre-wrap">{comment.content}</p>
+                    </div>
+                  ))
+                )}
+              </div>
+              
+              {/* Add Comment Form */}
+              <div className="border-t border-zinc-800 pt-4">
+                <textarea
+                  value={commentText}
+                  onChange={(e) => setCommentText(e.target.value)}
+                  placeholder="Write your comment..."
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg p-4 min-h-24 focus:outline-none focus:border-cyan-500 resize-none mb-4"
+                />
+                <div className="flex gap-2 justify-end">
+                  <button
+                    onClick={() => {
+                      setShowCommentModal(null);
+                      setCommentText("");
+                    }}
+                    className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors"
+                  >
+                    Close
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (post) handleCommentPost(post);
+                    }}
+                    disabled={!commentText.trim() || commentingPosts.has(showCommentModal || "") || !currentAddress}
+                    className="px-4 py-2 bg-cyan-500 hover:bg-cyan-600 disabled:bg-zinc-700 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+                  >
+                    {commentingPosts.has(showCommentModal || "") ? "Posting..." : "Post Comment"}
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       <MobileSidebar
         isOpen={isSidebarOpen}
