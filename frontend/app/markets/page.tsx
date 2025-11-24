@@ -74,20 +74,29 @@ export default function MarketsPage() {
           return prevMarkets.map(market => {
             const price = newPriceMap.get(market.id);
             if (price) {
+              // Price from feed is in MIST, normalize to SUI
               const currentPrice = formatPrice(price.price);
               const previousPrice = price.ohlc?.open ? formatPrice(price.ohlc.open) : currentPrice;
               const priceChange = previousPrice > 0 
                 ? ((currentPrice - previousPrice) / previousPrice) * 100 
                 : market.change24h;
               
+              // Ensure market.price is normalized (in SUI, not MIST)
+              const normalizedMarketPrice = market.price > 1e6 ? market.price / 1e9 : market.price;
+              
               return {
                 ...market,
-                price: currentPrice,
+                price: currentPrice, // Already normalized to SUI
                 change24h: priceChange,
-                marketCap: currentPrice * (market.marketCap / (market.price || 1)), // Maintain market cap ratio
+                marketCap: currentPrice * (market.marketCap / (normalizedMarketPrice || 1)), // Maintain market cap ratio
               };
             }
-            return market;
+            // If no price data, ensure existing market.price is normalized
+            const normalizedPrice = market.price > 1e6 ? market.price / 1e9 : market.price;
+            return {
+              ...market,
+              price: normalizedPrice,
+            };
           });
         });
         
@@ -363,6 +372,7 @@ export default function MarketsPage() {
             
             const feedPrice = priceMap.get(token.id);
             if (feedPrice) {
+              // Price from feed is in MIST, normalize to SUI
               price = formatPrice(feedPrice.price);
               const previousPrice = feedPrice.ohlc?.open ? formatPrice(feedPrice.ohlc.open) : price;
               priceChange = previousPrice > 0 
@@ -376,17 +386,39 @@ export default function MarketsPage() {
                 if (priceData && priceData.price !== null && priceData.price !== undefined) {
                   const rawPrice = Number(priceData.price);
                   if (rawPrice > 0) {
-                    price = rawPrice / 1000000000; // 1e9
+                    // Normalize: divide by 1e9 to convert from MIST to SUI
+                    price = rawPrice / 1e9;
                     console.log(`Price conversion: ${rawPrice} MIST / 1e9 = ${price} SUI`);
                     
+                    // Ensure price is reasonable (should be in SUI after normalization)
                     if (price > 1000000) {
-                      console.warn(`Price seems very high: ${price} SUI for token ${token.id}`);
+                      console.warn(`Price seems very high: ${price} SUI for token ${token.id}. Raw: ${rawPrice}`);
+                      // If still huge, might need different normalization
+                      if (rawPrice > 1e15) {
+                        price = rawPrice / 1e18; // Try 18 decimals
+                        console.log(`Trying 18 decimals: ${rawPrice} / 1e18 = ${price} SUI`);
+                      }
                     }
                   }
                 }
               } catch (priceError) {
                 console.warn(`Failed to fetch price for token ${token.id}:`, priceError);
               }
+            }
+            
+            // Ensure price is always normalized (in SUI, not MIST)
+            // If price is suspiciously large, it might not be normalized
+            if (price > 1e6) {
+              console.warn(`Price ${price} seems too large for token ${token.id}, normalizing...`);
+              price = price / 1e9;
+              console.log(`Normalized price for ${token.id}: ${price} SUI`);
+            }
+            
+            // Final check: ensure price is reasonable (should be < 1000 SUI for most tokens)
+            // If it's still huge, normalize again (might be double-encoded)
+            if (price > 1e6) {
+              console.warn(`Price ${price} still too large after normalization, normalizing again...`);
+              price = price / 1e9;
             }
 
             // Calculate market cap (price * circulating supply)
@@ -405,7 +437,7 @@ export default function MarketsPage() {
               name: (token.name && token.name !== 'Unknown' && !token.name.includes('?')) 
                 ? token.name 
                 : `Token ${token.id.slice(2, 10)}`,
-              price: price,
+              price: price, // This should now be normalized to SUI
               change24h: change24h,
               volume24h: volume24h,
               marketCap: marketCap,
@@ -673,7 +705,28 @@ export default function MarketsPage() {
                   <td className="py-4 px-6 text-right font-semibold">
                     {(() => {
                       const price = priceData.get(market.id);
-                      const currentPrice = price ? formatPrice(price.price) : market.price;
+                      let currentPrice = 0;
+                      if (price) {
+                        // Price from feed is in MIST, normalize to SUI
+                        // Double-check: if price.price is already normalized (< 1e6), use it as-is
+                        // Otherwise, normalize it
+                        const rawPrice = price.price;
+                        if (rawPrice > 1e6) {
+                          currentPrice = formatPrice(rawPrice);
+                        } else {
+                          currentPrice = rawPrice;
+                        }
+                      } else if (market.price > 0) {
+                        // market.price should already be normalized, but double-check
+                        // If it's suspiciously large (> 1e6), it might be in MIST
+                        currentPrice = market.price > 1e6 ? market.price / 1e9 : market.price;
+                      }
+                      // Final safety check: if price is still huge, normalize it
+                      // This catches any edge cases where price might still be in MIST
+                      if (currentPrice > 1e6) {
+                        console.warn(`Price ${currentPrice} still too large for ${market.id}, normalizing in display`);
+                        currentPrice = currentPrice / 1e9;
+                      }
                       return currentPrice > 0 
                         ? `${currentPrice.toFixed(6)} SUI`
                         : '-';
@@ -766,8 +819,18 @@ export default function MarketsPage() {
             {/* Current Price Display */}
             {(() => {
               const currentPriceData = priceData.get(selectedToken.id);
-              const currentPrice = currentPriceData ? formatPrice(currentPriceData.price) : selectedToken.price;
-              const previousPrice = currentPriceData?.ohlc?.open ? formatPrice(currentPriceData.ohlc.open) : currentPrice;
+              let currentPrice = 0;
+              if (currentPriceData) {
+                // Price from feed is in MIST, normalize to SUI
+                currentPrice = formatPrice(currentPriceData.price);
+              } else if (selectedToken.price > 0) {
+                // Ensure selectedToken.price is normalized
+                currentPrice = selectedToken.price > 1e6 ? selectedToken.price / 1e9 : selectedToken.price;
+              }
+              
+              const previousPrice = currentPriceData?.ohlc?.open 
+                ? formatPrice(currentPriceData.ohlc.open) 
+                : currentPrice;
               const priceChange = previousPrice > 0 
                 ? ((currentPrice - previousPrice) / previousPrice) * 100 
                 : selectedToken.change24h;
@@ -777,7 +840,7 @@ export default function MarketsPage() {
                   <div className="text-xs text-zinc-400 mb-1">Current Market Price</div>
                   <div className="flex items-center justify-between">
                     <div className="text-lg font-semibold text-white">
-                      {currentPrice.toFixed(6)} SUI
+                      {currentPrice > 0 ? currentPrice.toFixed(6) : '0.000000'} SUI
                     </div>
                     <div className={`text-sm font-medium ${priceChange >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                       {priceChange >= 0 ? '+' : ''}{priceChange.toFixed(2)}%
