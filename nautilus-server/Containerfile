@@ -60,7 +60,8 @@ ARG MAL_BEARER_TOKEN
 ENV RUSTFLAGS="-C target-feature=+crt-static -C relocation-model=static"
 ENV MAL_CLIENT_ID=${MAL_CLIENT_ID}
 ENV MAL_BEARER_TOKEN=${MAL_BEARER_TOKEN}
-RUN cargo build --locked --no-default-features --features $ENCLAVE_APP --release --target "$TARGET"
+RUN cargo build --locked --release --target "$TARGET"
+
 
 WORKDIR /build_cpio
 ENV KBUILD_BUILD_TIMESTAMP=1
