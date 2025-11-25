@@ -2,7 +2,7 @@
 
 **A Decentralized Data Market for Anime, Manga & Manhwa Fandom**
 
-ODX transforms fan engagement into a tradable, ownable asset. Think of it as a stock market, but instead of trading company shares, users trade tokens that represent the engagement and popularity of anime, manga, and manhwa IPs.tlius
+ODX transforms fan engagement into a tradable, ownable asset. Think of it as a stock market, but instead of trading company shares, users trade tokens that represent the engagement and popularity of anime, manga, and manhwa IPs.
 
 ---
 
@@ -12,11 +12,12 @@ ODX transforms fan engagement into a tradable, ownable asset. Think of it as a s
 2. [Solution Overview](#solution-overview)
 3. [How It Works](#how-it-works)
 4. [Walrus: The Core of Our Data Market](#walrus-the-core-of-our-data-market)
-5. [Architecture](#architecture)
-6. [Key Features](#key-features)
-7. [Project Structure](#project-structure)
-8. [Getting Started](#getting-started)
-9. [Documentation](#documentation)
+5. [Nautilus: Verifiable External Data Oracle](#nautilus-verifiable-external-data-oracle)
+6. [Architecture](#architecture)
+7. [Key Features](#key-features)
+8. [Project Structure](#project-structure)
+9. [Getting Started](#getting-started)
+10. [Documentation](#documentation)
 
 ---
 
@@ -101,10 +102,10 @@ All fan submissions for a particular IP are aggregated to form a **Data Profile*
 
 **Token price calculation:**
 ```
-Engagement data from Walrus → Oracle Service → Aggregated Metrics → Token Price
+User Engagement (Walrus) + External Data (Nautilus) → Oracle Service → Combined Metrics → Token Price
 ```
 
-Price increases as engagement/popularity grows, reflecting genuine community interest.
+Price increases as engagement/popularity grows, reflecting both genuine community interest (Walrus) and market reality (Nautilus).
 
 ### 4. Attribution & Rewards
 
@@ -139,15 +140,18 @@ Price discovery combines:
    - Stakes 100 tokens on her prediction
    - All data stored on Walrus with her wallet signature
 
-2. **Oracle service** reads Walrus data:
-   - Queries all Chainsaw Man contributions
+2. **Oracle service** reads data from multiple sources:
+   - Queries all Chainsaw Man contributions from Walrus
    - Verifies wallet signatures
-   - Aggregates comprehensive metrics (ratings, memes, posts, predictions, stakes)
-   - Calculates engagement growth rate
+   - Fetches external metrics from Nautilus (MyAnimeList, AniList)
+   - Verifies Nautilus signatures
+   - Aggregates comprehensive metrics (user ratings, memes, posts, predictions, stakes + external popularity)
+   - Calculates combined engagement growth rate
 
 3. **Smart contract updates**:
-   - Updates engagement metrics on-chain
-   - Recalculates $CSM token price based on total engagement
+   - Verifies Nautilus signatures on-chain
+   - Updates engagement metrics on-chain (user + external)
+   - Recalculates $CSM token price based on combined metrics (60% user engagement, 40% external popularity)
    - Marks Lydia as early contributor
    - Triggers reward distribution
 
@@ -439,6 +443,211 @@ When token price needs to update:
 
 ---
 
+## Nautilus: Verifiable External Data Oracle
+
+**Nautilus Oracle provides cryptographically verified external data to complement user contributions from Walrus.**
+
+### Why Nautilus is Essential
+
+#### 1. External Truth Sources
+
+**The Problem:**
+- User engagement data alone may not reflect broader market trends
+- Need to verify community sentiment against established platforms
+- Price manipulation risk if relying solely on internal data
+
+**The Solution:**
+- Nautilus fetches data from trusted external sources (MyAnimeList, AniList, MangaDex)
+- Data is cryptographically signed by the Nautilus enclave
+- Provides verifiable "external truth" to validate community engagement
+
+#### 2. Secure Off-Chain Computation
+
+**How Nautilus Works:**
+- Runs in an **AWS Nitro Enclave** (secure, isolated environment)
+- Fetches data from external APIs (MyAnimeList, AniList, MangaDex)
+- Cryptographically signs the data with enclave keys
+- Returns signed metrics that can be verified on-chain
+
+**Key Benefits:**
+- **Tamper-proof**: Enclave ensures data integrity
+- **Verifiable**: Signatures can be verified on-chain
+- **Transparent**: Attestation documents prove enclave authenticity
+- **Trustless**: No need to trust a centralized oracle
+
+#### 3. Combined Data Pipeline
+
+**The Complete Flow:**
+```
+User Contributions (Walrus) + External Data (Nautilus) → Oracle Service → Combined Metrics → Token Price
+```
+
+**Data Sources Combined:**
+- **Walrus**: User ratings, memes, posts, predictions, stakes (community engagement)
+- **Nautilus**: External ratings, popularity scores, member counts, trending data (market reality)
+
+**Price Calculation:**
+```
+price = base_price * (1 + growth_factor)
+
+growth_factor = (
+  user_engagement_growth * 0.6 +      // 60% weight on community data
+  external_popularity_growth * 0.4    // 40% weight on external truth
+) * multiplier
+```
+
+### How Nautilus Integrates with ODX
+
+#### 1. External Data Fetching
+
+**Oracle Service Workflow:**
+1. Oracle service calls Nautilus enclave with IP token name
+2. Nautilus enclave fetches data from configured sources:
+   - **MyAnimeList**: Ratings, popularity, member counts
+   - **AniList**: Ratings, favorites, trending scores
+   - **MangaDex**: View counts, ratings, popularity metrics
+3. Enclave signs the data cryptographically
+4. Returns signed metrics to oracle service
+
+**Example Nautilus Response:**
+```json
+{
+  "source": "myanimelist",
+  "ip_name": "Chainsaw Man",
+  "metrics": {
+    "average_rating": 8.7,
+    "popularity_rank": 15,
+    "member_count": 2500000,
+    "favorites_count": 450000
+  },
+  "signature": "0xabc123...",
+  "timestamp": 1736629200,
+  "attestation": "..."
+}
+```
+
+#### 2. Signature Verification
+
+**On-Chain Verification:**
+- Smart contracts verify Nautilus signatures
+- Enclave public key registered on-chain
+- Attestation documents prove enclave authenticity
+- Prevents data manipulation and ensures trust
+
+**Verification Process:**
+1. Oracle receives signed data from Nautilus
+2. Oracle forwards data + signature to smart contract
+3. Smart contract verifies signature matches registered enclave key
+4. If valid, metrics are accepted and used for price calculation
+
+#### 3. Combined Metrics Aggregation
+
+**Oracle Service Combines:**
+- **User Metrics** (from Walrus):
+  - Average user ratings
+  - Total contributors
+  - Meme/post engagement
+  - Prediction activity
+  - Stake volume
+
+- **External Metrics** (from Nautilus):
+  - External average ratings
+  - Popularity scores
+  - Member/view counts
+  - Trending indicators
+
+- **Combined Result**:
+  - Weighted average ratings
+  - Comprehensive popularity score
+  - Growth rate (user + external trends)
+  - Market sentiment indicator
+
+### Nautilus Enclave Architecture
+
+```
+┌─────────────────────────────────┐
+│   External APIs                 │
+│   - MyAnimeList                 │
+│   - AniList                     │
+│   - MangaDex                    │
+└──────────┬──────────────────────┘
+           │
+           │ Fetches data
+           ▼
+┌─────────────────────────────────┐
+│   AWS Nitro Enclave             │
+│   (Nautilus Server)             │
+│                                 │
+│   1. Fetches external data      │
+│   2. Signs with enclave key     │
+│   3. Returns signed metrics     │
+└──────────┬──────────────────────┘
+           │
+           │ Signed data
+           ▼
+┌─────────────────────────────────┐
+│   Oracle Service (Backend)      │
+│   - Receives signed metrics     │
+│   - Combines with Walrus data   │
+│   - Forwards to smart contract  │
+└──────────┬──────────────────────┘
+           │
+           │ Combined metrics
+           ▼
+┌─────────────────────────────────┐
+│   Smart Contract (Sui)          │
+│   - Verifies Nautilus signature │
+│   - Updates engagement metrics  │
+│   - Calculates token price      │
+└─────────────────────────────────┘
+```
+
+### Key Benefits of Nautilus Integration
+
+**For Users:**
+- **Accurate Pricing**: Token prices reflect both community engagement and market reality
+- **Transparency**: Can verify external data sources independently
+- **Trust**: External data is cryptographically verified, not manipulated
+
+**For the Platform:**
+- **Robust Pricing**: Multiple data sources prevent manipulation
+- **Market Alignment**: Prices align with established platforms
+- **Verifiable**: All external data can be independently verified on-chain
+
+**For Token Holders:**
+- **Real Value**: Token prices based on comprehensive, verified data
+- **Market Validation**: External data validates community sentiment
+- **Fair Trading**: Prevents price manipulation through verified sources
+
+### Configuration
+
+**Environment Variables:**
+```bash
+NAUTILUS_ENCLAVE_URL=http://localhost:3000
+NAUTILUS_ENCLAVE_PUBLIC_KEY=<enclave-public-key>
+NAUTILUS_TIMEOUT=30000
+NAUTILUS_ENABLED=true
+NAUTILUS_SOURCES=myanimelist,anilist
+```
+
+**Endpoints:**
+- `GET /health_check` - Check enclave health
+- `GET /get_attestation` - Get attestation document for on-chain registration
+- `POST /process_data` - Fetch and sign external data
+
+### Documentation
+
+For detailed Nautilus setup and deployment:
+- [Nautilus & Walrus Integration](NAUTILUS_WALRUS_INTEGRATION.md) - Complete integration guide
+- [Nautilus Server README](nautilus-server/README.md) - Deployment guide for AWS Nitro Enclaves
+
+**Together, Walrus and Nautilus create a comprehensive, verifiable data pipeline:**
+- **Walrus** ensures users own their contributions
+- **Nautilus** provides verifiable external truth
+- **Combined** they create accurate, tamper-proof token pricing
+
+---
+
 ## Architecture
 
 ### System Components
@@ -451,8 +660,10 @@ When token price needs to update:
 
 2. **Backend/Oracle Service** (Node.js + Express)
    - Reads Walrus data
+   - Calls Nautilus enclave for external data
    - Verifies wallet signatures
-   - Aggregates engagement metrics
+   - Verifies Nautilus signatures
+   - Aggregates engagement metrics (Walrus + Nautilus)
    - Calculates rewards
    - Updates smart contracts
    - Price feed aggregation
@@ -463,14 +674,20 @@ When token price needs to update:
    - Immutable and timestamped
    - Queryable by IP token ID
 
-4. **Smart Contracts** (Sui Move)
+4. **Nautilus Oracle** (AWS Nitro Enclave)
+   - Fetches external data from MyAnimeList, AniList, MangaDex
+   - Cryptographically signs external metrics
+   - Provides verifiable external truth sources
+   - Runs in secure, isolated enclave environment
+
+5. **Smart Contracts** (Sui Move)
    - IP token creation and management
    - Marketplace trading
    - Reward distribution
    - Price calculation
    - Contributor tracking
 
-5. **Indexing Service**
+6. **Indexing Service**
    - Indexes contributions by IP token ID
    - Enables fast queries
    - Tracks contribution history
@@ -488,6 +705,7 @@ When token price needs to update:
 - Node.js
 - Express.js
 - Walrus CLI integration
+- Nautilus Oracle integration
 - Sui TypeScript SDK
 
 **Blockchain:**
@@ -496,6 +714,10 @@ When token price needs to update:
 
 **Storage:**
 - Walrus decentralized storage
+
+**Oracle:**
+- Nautilus (AWS Nitro Enclaves)
+- External API integration (MyAnimeList, AniList, MangaDex)
 
 ---
 
@@ -655,6 +877,8 @@ For detailed setup instructions, see:
 - [Project Concept](project-concept.md) - Detailed project overview and design
 - [Walrus Integration](WALRUS_INTEGRATION.md) - Why Walrus is critical
 - [Walrus Integrator Guide](WALRUS_INTEGRATOR_GUIDE.md) - Technical integration guide
+- [Nautilus & Walrus Integration](NAUTILUS_WALRUS_INTEGRATION.md) - Complete integration guide for both systems
+- [Nautilus Server README](nautilus-server/README.md) - Nautilus enclave deployment guide
 
 ### Component Documentation
 - [Backend API Documentation](backend/API_DOCS.md)
