@@ -1,4 +1,4 @@
-# ODX - Otaku Data Exchange
+# ODX - Otaku Data Exchange sui
 
 **A Decentralized Data Market for Anime, Manga & Manhwa Fandom**
 
